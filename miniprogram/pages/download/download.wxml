@@ -1,0 +1,69 @@
+<!-- pages/download/download.wxml -->
+<view class="container">
+  <!-- 标题 -->
+  <view class="page-header">
+    <text class="page-title">无水印视频下载</text>
+    <text class="page-subtitle">支持抖音/快手/B站/小红书等 1700+ 平台</text>
+  </view>
+
+  <!-- URL 输入区 -->
+  <view class="input-card card">
+    <text class="input-label">视频链接</text>
+    <textarea
+      class="input-field"
+      placeholder="粘贴视频链接，如 https://v.douyin.com/xxxxx"
+      value="{{url}}"
+      bindinput="onUrlInput"
+      auto-focus
+    />
+    <button class="btn-primary" bindtap="parseVideo" disabled="{{loading}}">
+      {{loading ? '解析中...' : '解析视频'}}
+    </button>
+  </view>
+
+  <!-- 视频预览卡片 -->
+  <view class="preview-card card" wx:if="{{videoInfo}}">
+    <view class="preview-header">
+      <image class="thumbnail" src="{{videoInfo.thumbnailUrl}}" mode="aspectFill" />
+      <view class="video-meta">
+        <text class="video-title">{{videoInfo.title}}</text>
+        <view class="meta-row">
+          <text class="tag">{{videoInfo.platform}}</text>
+          <text class="author">@{{videoInfo.author}}</text>
+          <text class="duration">{{videoInfo.durationFormatted}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 下载按钮区 -->
+    <view class="download-section" wx:if="{{!taskId}}">
+      <button class="btn-primary" bindtap="downloadVideo" disabled="{{downloading}}">
+        {{downloading ? '下载中...' : '下载无水印视频'}}
+      </button>
+      <text class="hint">下载后会保存到本地相册</text>
+    </view>
+
+    <!-- 下载进度 -->
+    <view class="progress-section" wx:else>
+      <view class="progress-header">
+        <text class="status-text">{{statusText}}</text>
+        <text class="progress-text">{{progress}}%</text>
+      </view>
+      <view class="progress-bar">
+        <view class="progress-bar-fill" style="width: {{progress}}%" />
+      </view>
+      <text class="hint">{{progressHint}}</text>
+    </view>
+  </view>
+
+  <!-- 空状态 -->
+  <view class="empty-state" wx:else>
+    <view class="empty-icon">📹</view>
+    <text class="empty-state-text">输入视频链接，开始解析</text>
+  </view>
+
+  <!-- 错误提示 -->
+  <view class="error-card" wx:if="{{error}}">
+    <text class="error-text">⚠️ {{error}}</text>
+  </view>
+</view>

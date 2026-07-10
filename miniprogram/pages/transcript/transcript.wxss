@@ -1,0 +1,176 @@
+/* pages/transcript/transcript.wxss */
+.container {
+  padding: 40rpx;
+  background: #f8fafc;
+}
+
+.page-header {
+  text-align: center;
+  margin-bottom: 30rpx;
+}
+
+.page-title {
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #1e293b;
+  display: block;
+}
+
+.page-subtitle {
+  font-size: 24rpx;
+  color: #64748b;
+  display: block;
+  margin-top: 8rpx;
+}
+
+/* 输入卡片 */
+.input-card {
+  margin-bottom: 24rpx;
+}
+
+.input-label {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #475569;
+  display: block;
+  margin-bottom: 16rpx;
+}
+
+.input-field {
+  width: 100%;
+  min-height: 200rpx;
+  background: #f8fafc;
+  border: 2rpx solid #e2e8f0;
+  border-radius: 16rpx;
+  padding: 24rpx 28rpx;
+  font-size: 26rpx;
+  color: #1e293b;
+  margin-bottom: 20rpx;
+}
+
+.btn-primary {
+  width: 100%;
+}
+
+.hint {
+  font-size: 24rpx;
+  color: #94a3b8;
+  text-align: center;
+  display: block;
+  margin-top: 16rpx;
+}
+
+/* 进度卡片 */
+.progress-card {
+  margin-bottom: 24rpx;
+}
+
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+
+.status-text {
+  font-size: 26rpx;
+  color: #6366f1;
+}
+
+.progress-text {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #6366f1;
+}
+
+.progress-bar {
+  height: 8rpx;
+  background: #e2e8f0;
+  border-radius: 4rpx;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  border-radius: 4rpx;
+  transition: width 0.3s ease;
+}
+
+.progress-hint {
+  font-size: 24rpx;
+  color: #64748b;
+  text-align: center;
+  display: block;
+  margin-top: 12rpx;
+}
+
+/* 结果卡片 */
+.result-card {
+  margin-bottom: 24rpx;
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20rpx;
+}
+
+.card-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 12rpx;
+}
+
+.btn-secondary {
+  font-size: 24rpx;
+  padding: 12rpx 20rpx;
+}
+
+/* 文案文本区域 */
+.text-scroll {
+  max-height: 600rpx;
+  background: #f8fafc;
+  border-radius: 12rpx;
+  padding: 24rpx;
+}
+
+.transcript-text {
+  font-size: 26rpx;
+  line-height: 1.8;
+  color: #1e293b;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 错误卡片 */
+.error-card {
+  background: #fef2f2;
+  border: 2rpx solid #fecaca;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-top: 20rpx;
+}
+
+.error-text {
+  font-size: 26rpx;
+  color: #ef4444;
+  display: block;
+  margin-bottom: 16rpx;
+}
+
+/* 空状态 */
+.empty-state {
+  text-align: center;
+  padding: 120rpx 40rpx;
+}
+
+.empty-icon {
+  font-size: 120rpx;
+  margin-bottom: 30rpx;
+}

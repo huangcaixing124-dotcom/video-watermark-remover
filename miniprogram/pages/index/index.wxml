@@ -1,0 +1,45 @@
+<!-- pages/index/index.wxml -->
+<view class="container">
+  <!-- Logo + Title -->
+  <view class="header">
+    <view class="logo">🎬</view>
+    <text class="title">去水印视频工具</text>
+    <text class="subtitle">无水印视频下载 · 视频文案提取</text>
+  </view>
+
+  <!-- 功能卡片 -->
+  <view class="feature-cards">
+    <view class="feature-card" bindtap="goDownload">
+      <view class="feature-icon">📥</view>
+      <text class="feature-title">无水印下载</text>
+      <text class="feature-desc">抖音/快手/B站/小红书等 1700+ 平台</text>
+    </view>
+
+    <view class="feature-card" bindtap="goTranscript">
+      <view class="feature-icon">📝</view>
+      <text class="feature-title">文案提取</text>
+      <text class="feature-desc">视频语音转文字，支持导出SRT字幕</text>
+    </view>
+  </view>
+
+  <!-- 支持平台 -->
+  <view class="platforms-card">
+    <text class="card-title">支持平台</text>
+    <view class="platform-list">
+      <text class="platform-tag">抖音</text>
+      <text class="platform-tag">快手</text>
+      <text class="platform-tag">小红书</text>
+      <text class="platform-tag">B站</text>
+      <text class="platform-tag">TikTok</text>
+      <text class="platform-tag">YouTube</text>
+      <text class="platform-tag">豆包</text>
+      <text class="platform-tag">即梦</text>
+      <text class="platform-tag">+1700</text>
+    </view>
+  </view>
+
+  <!-- 设置入口 -->
+  <view class="settings-link" bindtap="goSettings">
+    <text>⚙️ 设置</text>
+  </view>
+</view>

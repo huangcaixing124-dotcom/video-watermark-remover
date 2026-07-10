@@ -1,0 +1,43 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/download/download",
+    "pages/transcript/transcript",
+    "pages/settings/settings"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarTitleText": "去水印视频工具",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f8fafc",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "color": "#94a3b8",
+    "selectedColor": "#6366f1",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页",
+        "iconPath": "images/home.png",
+        "selectedIconPath": "images/home-active.png"
+      },
+      {
+        "pagePath": "pages/download/download",
+        "text": "下载",
+        "iconPath": "images/download.png",
+        "selectedIconPath": "images/download-active.png"
+      },
+      {
+        "pagePath": "pages/transcript/transcript",
+        "text": "文案",
+        "iconPath": "images/transcript.png",
+        "selectedIconPath": "images/transcript-active.png"
+      }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}
