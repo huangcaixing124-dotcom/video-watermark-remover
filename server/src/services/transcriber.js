@@ -34,6 +34,7 @@ fs.mkdirSync(TRANSCRIPT_DIR, { recursive: true });
  */
 const WHISPER_SCRIPT = `
 import sys
+import os
 from pathlib import Path
 from faster_whisper import WhisperModel
 
@@ -44,9 +45,25 @@ language = sys.argv[4]
 device = sys.argv[5]
 compute_type = sys.argv[6]
 
-print(f"Loading model {model_size}...")
+# On Windows, use direct model path to avoid symlink issues with HF cache
+# Try to find the cached model snapshot first
+hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
+model_dir = hf_cache / f"models--Systran--faster-whisper-{model_size}"
+if model_dir.exists():
+    snapshots = list((model_dir / "snapshots").iterdir()) if (model_dir / "snapshots").exists() else []
+    if snapshots:
+        model_path = str(snapshots[0])
+        print(f"Using cached model at {model_path}")
+    else:
+        model_path = model_size
+        print(f"Using model: {model_size}")
+else:
+    model_path = model_size
+    print(f"Using model: {model_size}")
+
+print(f"Loading model...")
 model = WhisperModel(
-    model_size,
+    model_path,
     device=device,
     compute_type=compute_type,
     cache_dir=Path(output_dir).parent
@@ -205,8 +222,10 @@ function downloadVideoWithYTDL(url, outputDir) {
   return new Promise((resolve, reject) => {
     const args = [
       '--no-playlist',
-      '--skip-download',
-      '--dump-json',
+      '--no-warnings',
+      '--merge-output-format', 'mp4',
+      '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+      '-o', path.join(outputDir, 'video.%(ext)s'),
     ];
 
     // Check cookies
@@ -218,26 +237,19 @@ function downloadVideoWithYTDL(url, outputDir) {
     args.push(url);
 
     const proc = spawn('yt-dlp', args, {
-      timeout: 60000,
-      maxBuffer: 4 * 1024 * 1024,
+      timeout: 300000,
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    let stdout = '';
     let stderr = '';
 
-    proc.stdout.on('data', data => { stdout += data.toString(); });
     proc.stderr.on('data', data => { stderr += data.toString(); });
 
     proc.on('close', code => {
-      if (code !== 0) {
+      if (code === 0) {
+        resolve();
+      } else {
         reject(new Error(stderr.slice(0, 300) || `yt-dlp exit ${code}`));
-        return;
-      }
-      try {
-        const data = JSON.parse(stdout.split('\n')[0]);
-        resolve(data);
-      } catch {
-        reject(new Error('解析视频信息失败'));
       }
     });
 
@@ -277,8 +289,8 @@ function extractAudio(videoPath, audioPath) {
  */
 function runWhisper(audioPath, outputDir, modelSize, language, device, computeType) {
   return new Promise((resolve, reject) => {
-    const scriptPath = path.join(outputDir, '_whisper_run.py');
-    fs.writeFileSync(scriptPath, WHISPER_SCRIPT, 'utf-8');
+    // Use the external Python script to avoid inline script encoding issues
+    const scriptPath = path.join(__dirname, 'whisper_transcribe.py');
 
     const proc = spawn('python', [
       scriptPath,
@@ -297,8 +309,6 @@ function runWhisper(audioPath, outputDir, modelSize, language, device, computeTy
     proc.stderr.on('data', data => { stderr += data.toString(); });
 
     proc.on('close', code => {
-      try { fs.unlinkSync(scriptPath); } catch {}
-
       if (code !== 0) {
         reject(new Error(stderr.slice(0, 500) || `Whisper exit ${code}`));
         return;

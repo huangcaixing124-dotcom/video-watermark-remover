@@ -13,26 +13,18 @@ const config = require('./config');
 const app = express();
 
 app.use(cors());
-app.use(morgan('dev'));
+app.use(morgan('combined', { skip: () => true })); // disable request logging
 app.use(express.json({ limit: '10mb' }));
-
-// ── Request logging for debugging ──────────────────────────────
-app.use((req, _res, next) => {
-  if (req.method === 'POST') {
-    console.log(`[DEBUG] ${req.method} ${req.path} headers:`, JSON.stringify(req.headers));
-    console.log(`[DEBUG] ${req.method} ${req.path} body:`, req.body);
-    console.log(`[DEBUG] ${req.method} ${req.path} body keys:`, Object.keys(req.body || {}));
-    console.log(`[DEBUG] ${req.method} ${req.path} url value:`, req.body?.url, 'type:', typeof req.body?.url);
-  }
-  next();
-});
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // ── Routes ──────────────────────────────────────────────────────
 const videoRoutes = require('./routes/video');
 const transcriptRoutes = require('./routes/transcript');
+const zenSleepRoutes = require('./routes/zen-sleep');
 
 app.use('/api/video', videoRoutes);
 app.use('/api/transcript', transcriptRoutes);
+app.use('/api/zen-sleep', zenSleepRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -85,16 +77,18 @@ function gracefulShutdown(signal) {
 process.on('SIGINT', gracefulShutdown);
 process.on('SIGTERM', gracefulShutdown);
 
-// ── Start ───────────────────────────────────────────────────────
-const server = app.listen(config.port, config.host, () => {
-  console.log(`\n${'='.repeat(52)}`);
-  console.log(`  去水印视频工具 服务已启动`);
-  console.log(`  端口: ${config.port}`);
-  console.log(`  地址: http://${config.host}:${config.port}`);
-  console.log(`  缓存目录: ${config.cacheDir}`);
-  console.log(`  Whisper模型: ${config.whisperModelSize}`);
-  console.log(`  设备: ${config.whisperDevice}`);
-  console.log(`${'='.repeat(52)}\n`);
-});
+// ── Start (only when run directly, not when imported as module) ──
+if (require.main === module) {
+  const server = app.listen(config.port, config.host, () => {
+    console.log(`\n${'='.repeat(52)}`);
+    console.log(`  去水印视频工具 服务已启动`);
+    console.log(`  端口: ${config.port}`);
+    console.log(`  地址: http://${config.host}:${config.port}`);
+    console.log(`  缓存目录: ${config.cacheDir}`);
+    console.log(`  Whisper模型: ${config.whisperModelSize}`);
+    console.log(`  设备: ${config.whisperDevice}`);
+    console.log(`${'='.repeat(52)}\n`);
+  });
+}
 
 module.exports = app;

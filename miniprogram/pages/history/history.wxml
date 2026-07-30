@@ -1,0 +1,36 @@
+<!-- pages/history/history.wxml -->
+<view class="page {{isDark ? 'dark' : ''}}">
+  <view class="page-header" style="display:flex;justify-content:space-between;align-items:center">
+    <text class="page-title">下载历史</text>
+    <view wx:if="{{!isEmpty}}" bindtap="clearAll" style="font-size:24rpx;color:var(--error);padding:8rpx 16rpx">清空</view>
+  </view>
+
+  <view class="history-list" wx:if="{{!isEmpty}}">
+    <view class="history-item card" wx:for="{{history}}" wx:key="url" data-index="{{index}}" data-item="{{item}}">
+      <view class="history-item-content">
+        <image class="history-thumb" src="{{item.thumbnailUrl || ''}}" mode="aspectFill" wx:if="{{item.thumbnailUrl}}" />
+        <view class="history-thumb history-thumb-placeholder" wx:else><text>🎬</text></view>
+        <view class="history-info">
+          <text class="history-title text-ellipsis">{{item.title || '视频'}}</text>
+          <view class="history-meta">
+            <text class="tag tag-sm">{{item.platform || '未知'}}</text>
+            <text class="text-tertiary" style="font-size:20rpx">{{item.durationFormatted || ''}}</text>
+          </view>
+          <text class="history-date">{{formatDate(item.downloadedAt)}}</text>
+        </view>
+      </view>
+      <view class="history-actions">
+        <view class="history-action" bindtap="redownload" data-item="{{item}}">💾</view>
+        <view class="history-action history-action-delete" bindtap="deleteItem" data-index="{{index}}">🗑️</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="empty-state" wx:if="{{isEmpty}}">
+    <view class="empty-icon">📂</view>
+    <text class="empty-text">暂无下载记录</text>
+    <text class="text-tertiary" style="font-size:24rpx;display:block;margin-top:12rpx">下载视频后，历史记录会出现在这里</text>
+  </view>
+
+  <view class="safe-bottom"></view>
+</view>

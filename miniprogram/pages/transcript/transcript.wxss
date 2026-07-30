@@ -1,176 +1,32 @@
 /* pages/transcript/transcript.wxss */
-.container {
-  padding: 40rpx;
-  background: #f8fafc;
-}
+.input-label { font-size: 26rpx; font-weight: 600; color: var(--text-secondary); display: block; margin-bottom: 12rpx; }
+.input-bar { display: flex; align-items: center; background: var(--bg-input); border: 1.5px solid var(--border-input); border-radius: var(--radius-md); margin-bottom: 20rpx; }
+.input-bar:focus-within { border-color: var(--primary); }
+.input-field-url { flex: 1; height: 80rpx; font-size: 26rpx; color: var(--text-primary); background: transparent; border: none; padding: 0 24rpx; outline: none; }
+.input-bar-actions { display: flex; gap: 4rpx; padding-right: 8rpx; }
+.input-btn { width: 56rpx; height: 56rpx; display: flex; align-items: center; justify-content: center; font-size: 28rpx; color: var(--text-secondary); border-radius: 50%; }
 
-.page-header {
-  text-align: center;
-  margin-bottom: 30rpx;
-}
+.detect-card { background: linear-gradient(135deg, #6366f1, #8b5cf6); border-radius: var(--radius-lg); padding: 24rpx 28rpx; margin-bottom: 20rpx; }
+.detect-row { display: flex; align-items: center; gap: 14rpx; margin-bottom: 16rpx; }
+.detect-icon { font-size: 32rpx; }
+.detect-info { flex: 1; min-width: 0; }
+.detect-label { font-size: 26rpx; font-weight: 600; color: white; display: block; }
+.detect-url { font-size: 20rpx; color: rgba(255,255,255,0.7); display: block; margin-top: 4rpx; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detect-actions { display: flex; gap: 12rpx; }
 
-.page-title {
-  font-size: 36rpx;
-  font-weight: 600;
-  color: #1e293b;
-  display: block;
-}
+.progress-section { padding: 8rpx 0; }
+.progress-row { display: flex; justify-content: space-between; margin-bottom: 12rpx; }
+.progress-text { font-size: 26rpx; color: var(--primary); }
+.progress-pct { font-size: 26rpx; font-weight: 600; color: var(--primary); }
+.progress-hint { font-size: 22rpx; color: var(--text-tertiary); text-align: center; display: block; margin-top: 12rpx; }
 
-.page-subtitle {
-  font-size: 24rpx;
-  color: #64748b;
-  display: block;
-  margin-top: 8rpx;
-}
+.result-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20rpx; }
+.result-actions { display: flex; gap: 6rpx; }
+.text-preview { max-height: 600rpx; background: var(--bg-input); border-radius: var(--radius-md); padding: 24rpx; }
+.text-content { font-size: 26rpx; line-height: 1.8; color: var(--text-primary); white-space: pre-wrap; word-break: break-word; }
 
-/* 输入卡片 */
-.input-card {
-  margin-bottom: 24rpx;
-}
+.error-actions { display: flex; gap: 16rpx; margin-top: 16rpx; }
 
-.input-label {
-  font-size: 26rpx;
-  font-weight: 600;
-  color: #475569;
-  display: block;
-  margin-bottom: 16rpx;
-}
-
-.input-field {
-  width: 100%;
-  min-height: 200rpx;
-  background: #f8fafc;
-  border: 2rpx solid #e2e8f0;
-  border-radius: 16rpx;
-  padding: 24rpx 28rpx;
-  font-size: 26rpx;
-  color: #1e293b;
-  margin-bottom: 20rpx;
-}
-
-.btn-primary {
-  width: 100%;
-}
-
-.hint {
-  font-size: 24rpx;
-  color: #94a3b8;
-  text-align: center;
-  display: block;
-  margin-top: 16rpx;
-}
-
-/* 进度卡片 */
-.progress-card {
-  margin-bottom: 24rpx;
-}
-
-.progress-header {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 12rpx;
-}
-
-.status-text {
-  font-size: 26rpx;
-  color: #6366f1;
-}
-
-.progress-text {
-  font-size: 26rpx;
-  font-weight: 600;
-  color: #6366f1;
-}
-
-.progress-bar {
-  height: 8rpx;
-  background: #e2e8f0;
-  border-radius: 4rpx;
-  overflow: hidden;
-}
-
-.progress-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6);
-  border-radius: 4rpx;
-  transition: width 0.3s ease;
-}
-
-.progress-hint {
-  font-size: 24rpx;
-  color: #64748b;
-  text-align: center;
-  display: block;
-  margin-top: 12rpx;
-}
-
-/* 结果卡片 */
-.result-card {
-  margin-bottom: 24rpx;
-}
-
-.result-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20rpx;
-}
-
-.card-title {
-  font-size: 28rpx;
-  font-weight: 600;
-  color: #1e293b;
-}
-
-.action-buttons {
-  display: flex;
-  gap: 12rpx;
-}
-
-.btn-secondary {
-  font-size: 24rpx;
-  padding: 12rpx 20rpx;
-}
-
-/* 文案文本区域 */
-.text-scroll {
-  max-height: 600rpx;
-  background: #f8fafc;
-  border-radius: 12rpx;
-  padding: 24rpx;
-}
-
-.transcript-text {
-  font-size: 26rpx;
-  line-height: 1.8;
-  color: #1e293b;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* 错误卡片 */
-.error-card {
-  background: #fef2f2;
-  border: 2rpx solid #fecaca;
-  border-radius: 16rpx;
-  padding: 24rpx;
-  margin-top: 20rpx;
-}
-
-.error-text {
-  font-size: 26rpx;
-  color: #ef4444;
-  display: block;
-  margin-bottom: 16rpx;
-}
-
-/* 空状态 */
-.empty-state {
-  text-align: center;
-  padding: 120rpx 40rpx;
-}
-
-.empty-icon {
-  font-size: 120rpx;
-  margin-bottom: 30rpx;
-}
+.guide-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28rpx 32rpx; display: flex; align-items: center; justify-content: space-between; margin-top: 8rpx; }
+.guide-text { font-size: 26rpx; color: var(--primary); font-weight: 500; }
+.guide-arrow { font-size: 28rpx; color: var(--primary); }

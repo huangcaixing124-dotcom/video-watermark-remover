@@ -1,45 +1,76 @@
 <!-- pages/index/index.wxml -->
-<view class="container">
-  <!-- Logo + Title -->
-  <view class="header">
-    <view class="logo">🎬</view>
-    <text class="title">去水印视频工具</text>
-    <text class="subtitle">无水印视频下载 · 视频文案提取</text>
+<view class="page {{isDark ? 'dark' : ''}}">
+  <view class="hero">
+    <view class="hero-badge">
+      <view class="status-dot {{connected ? 'online' : 'offline'}}"></view>
+      <text>{{connected ? '服务已连接' : '服务未连接'}}</text>
+    </view>
+    <text class="hero-title">去水印视频</text>
+    <text class="hero-subtitle">粘贴链接  ·  一键下载  ·  无水印</text>
   </view>
 
-  <!-- 功能卡片 -->
-  <view class="feature-cards">
+  <view class="clipboard-card card" wx:if="{{hasClipboard}}" bindtap="goDownloadWithUrl">
+    <view class="clipboard-row">
+      <view class="clipboard-icon-wrap"><text>📋</text></view>
+      <view class="clipboard-info">
+        <text class="clipboard-label">检测到视频链接</text>
+        <text class="clipboard-url text-ellipsis">{{clipboardUrl}}</text>
+      </view>
+      <text class="clipboard-platform-tag">{{clipboardPlatform}}</text>
+    </view>
+    <text class="clipboard-arrow">→</text>
+  </view>
+
+  <view class="feature-grid">
     <view class="feature-card" bindtap="goDownload">
-      <view class="feature-icon">📥</view>
+      <view class="feature-icon" style="background:linear-gradient(135deg,#ede9fe,#e0e7ff)">⬇️</view>
       <text class="feature-title">无水印下载</text>
-      <text class="feature-desc">抖音/快手/B站/小红书等 1700+ 平台</text>
+      <text class="feature-desc">抖音/快手/B站/小红书/豆包</text>
+      <text class="feature-action">开始下载 →</text>
     </view>
-
     <view class="feature-card" bindtap="goTranscript">
-      <view class="feature-icon">📝</view>
+      <view class="feature-icon" style="background:linear-gradient(135deg,#dbeafe,#e0e7ff)">📝</view>
       <text class="feature-title">文案提取</text>
-      <text class="feature-desc">视频语音转文字，支持导出SRT字幕</text>
+      <text class="feature-desc">视频语音转文字 · 导出SRT</text>
+      <text class="feature-action">提取文案 →</text>
     </view>
   </view>
 
-  <!-- 支持平台 -->
-  <view class="platforms-card">
+  <view class="card">
     <text class="card-title">支持平台</text>
-    <view class="platform-list">
-      <text class="platform-tag">抖音</text>
-      <text class="platform-tag">快手</text>
-      <text class="platform-tag">小红书</text>
-      <text class="platform-tag">B站</text>
-      <text class="platform-tag">TikTok</text>
-      <text class="platform-tag">YouTube</text>
-      <text class="platform-tag">豆包</text>
-      <text class="platform-tag">即梦</text>
-      <text class="platform-tag">+1700</text>
+    <view class="platform-grid">
+      <view class="platform-item" wx:for="{{['抖音','快手','小红书','B站','豆包','TikTok','YouTube','微博']}}" wx:key="*this"><text>{{item}}</text></view>
     </view>
   </view>
 
-  <!-- 设置入口 -->
-  <view class="settings-link" bindtap="goSettings">
-    <text>⚙️ 设置</text>
+  <view class="card" wx:if="{{recentHistory.length > 0}}">
+    <view class="section-header">
+      <text class="card-title">最近下载</text>
+      <text class="text-secondary" style="font-size:24rpx" bindtap="goHistory">查看全部 →</text>
+    </view>
+    <view class="recent-list">
+      <view class="recent-item" wx:for="{{recentHistory}}" wx:key="url" bindtap="goHistory">
+        <image class="recent-thumb" src="{{item.thumbnailUrl || ''}}" mode="aspectFill" wx:if="{{item.thumbnailUrl}}" />
+        <view class="recent-thumb recent-thumb-placeholder" wx:else><text>🎬</text></view>
+        <view class="recent-info">
+          <text class="recent-title text-ellipsis">{{item.title || '视频'}}</text>
+          <text class="recent-meta">{{item.platform || ''}} {{item.durationFormatted ? '· ' + item.durationFormatted : ''}}</text>
+        </view>
+      </view>
+    </view>
   </view>
+
+  <view class="card">
+    <text class="card-title">三步完成下载</text>
+    <view class="steps">
+      <view class="step"><view class="step-num">1</view><text class="step-text">在 App 中点击分享 → 复制链接</text></view>
+      <view class="step-connector"></view>
+      <view class="step"><view class="step-num">2</view><text class="step-text">打开本小程序，链接自动识别</text></view>
+      <view class="step-connector"></view>
+      <view class="step"><view class="step-num">3</view><text class="step-text">一键下载无水印视频到相册</text></view>
+    </view>
+  </view>
+
+  <view class="settings-link" bindtap="goSettings">⚙️ 设置</view>
+  <view class="safe-bottom"></view>
 </view>

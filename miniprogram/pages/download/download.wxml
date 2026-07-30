@@ -1,69 +1,112 @@
 <!-- pages/download/download.wxml -->
-<view class="container">
-  <!-- 标题 -->
+<view class="page {{isDark ? 'dark' : ''}}">
+  <!-- Header -->
   <view class="page-header">
-    <text class="page-title">无水印视频下载</text>
-    <text class="page-subtitle">支持抖音/快手/B站/小红书等 1700+ 平台</text>
+    <text class="page-title">视频下载</text>
+    <text class="page-subtitle">抖音/快手/B站/小红书/豆包 无水印下载</text>
   </view>
 
-  <!-- URL 输入区 -->
-  <view class="input-card card">
-    <text class="input-label">视频链接</text>
-    <textarea
-      class="input-field"
-      placeholder="粘贴视频链接，如 https://v.douyin.com/xxxxx"
-      value="{{url}}"
-      bindinput="onUrlInput"
-      auto-focus
-    />
-    <button class="btn-primary" bindtap="parseVideo" disabled="{{loading}}">
-      {{loading ? '解析中...' : '解析视频'}}
+  <!-- 剪贴板检测 -->
+  <view class="detect-card" wx:if="{{showDetect}}" bindtap="useDetectedUrl">
+    <view class="detect-row">
+      <view class="detect-icon">📋</view>
+      <view class="detect-info">
+        <text class="detect-label">检测到视频链接</text>
+        <text class="detect-url">{{detectedUrl}}</text>
+      </view>
+      <text class="detect-platform">{{detectedPlatform}}</text>
+    </view>
+    <view class="detect-actions">
+      <button class="btn btn-small" style="background:var(--primary);color:white;flex:1" bindtap="useDetectedUrl" catchtap>一键粘贴使用</button>
+      <button class="btn btn-small" style="background:rgba(255,255,255,0.3);color:white;flex:0.5" bindtap="dismissDetect" catchtap>忽略</button>
+    </view>
+  </view>
+
+  <!-- 输入区域 -->
+  <view class="card">
+    <view class="input-label">视频链接</view>
+    <view class="input-bar">
+      <input class="input-field-url" placeholder="https://v.douyin.com/..." value="{{url}}" bindinput="onUrlInput" />
+      <view class="input-bar-actions">
+        <view class="input-btn" bindtap="pasteFromClipboard">📋</view>
+        <view class="input-btn" wx:if="{{url}}" bindtap="clearUrl">✕</view>
+      </view>
+    </view>
+    <button class="btn btn-primary" bindtap="parseVideo" disabled="{{loading || !url}}" wx:if="{{!videoInfo && !taskId && !error}}">
+      {{loading ? '⏳ 解析中...' : '🔍 解析视频'}}
     </button>
+    <button class="btn btn-ghost" style="width:100%;margin-top:12rpx;padding:16rpx" bindtap="pasteFromClipboard">📋 一键粘贴链接</button>
   </view>
 
-  <!-- 视频预览卡片 -->
-  <view class="preview-card card" wx:if="{{videoInfo}}">
-    <view class="preview-header">
-      <image class="thumbnail" src="{{videoInfo.thumbnailUrl}}" mode="aspectFill" />
-      <view class="video-meta">
-        <text class="video-title">{{videoInfo.title}}</text>
-        <view class="meta-row">
-          <text class="tag">{{videoInfo.platform}}</text>
-          <text class="author">@{{videoInfo.author}}</text>
-          <text class="duration">{{videoInfo.durationFormatted}}</text>
+  <!-- 视频预览 -->
+  <view class="card" wx:if="{{videoInfo && !error}}">
+    <view class="preview-row" bindtap="showPreview" style="cursor:pointer">
+      <image class="preview-thumb" src="{{videoInfo.thumbnailUrl || ''}}" mode="aspectFill" wx:if="{{videoInfo.thumbnailUrl}}" />
+      <view class="preview-thumb preview-thumb-fallback" wx:else>🎬</view>
+      <view class="preview-meta">
+        <text class="preview-title">{{videoInfo.title || '视频'}}</text>
+        <view class="preview-tags">
+          <text class="tag">{{videoInfo.platform || '未知'}}</text>
+          <text wx:if="{{videoInfo.author}}" style="color:var(--text-secondary);font-size:24rpx">@{{videoInfo.author}}</text>
+          <text wx:if="{{videoInfo.durationFormatted}}" style="color:var(--text-tertiary);font-size:24rpx">{{videoInfo.durationFormatted}}</text>
         </view>
+        <text style="color:var(--primary);font-size:22rpx;margin-top:12rpx;display:block">▶ 点击预览视频</text>
       </view>
     </view>
-
-    <!-- 下载按钮区 -->
-    <view class="download-section" wx:if="{{!taskId}}">
-      <button class="btn-primary" bindtap="downloadVideo" disabled="{{downloading}}">
-        {{downloading ? '下载中...' : '下载无水印视频'}}
-      </button>
-      <text class="hint">下载后会保存到本地相册</text>
-    </view>
-
+    <!-- 下载按钮 -->
+    <button class="btn btn-primary dl-btn" bindtap="downloadVideo" disabled="{{downloading}}" wx:if="{{!taskId}}">
+      {{downloading ? '⏳ 下载中...' : '⬇️ 下载无水印视频'}}
+    </button>
     <!-- 下载进度 -->
-    <view class="progress-section" wx:else>
-      <view class="progress-header">
-        <text class="status-text">{{statusText}}</text>
-        <text class="progress-text">{{progress}}%</text>
+    <view class="progress-section" wx:elif="{{taskId && progress < 100}}">
+      <view class="progress-row">
+        <text class="progress-text">{{statusText}}</text>
+        <text class="progress-pct">{{progress}}%</text>
       </view>
-      <view class="progress-bar">
-        <view class="progress-bar-fill" style="width: {{progress}}%" />
-      </view>
-      <text class="hint">{{progressHint}}</text>
+      <view class="progress-bar"><view class="progress-fill" style="width:{{progress}}%"></view></view>
+      <text class="progress-hint">{{statusHint}}</text>
+    </view>
+    <!-- 下载完成 -->
+    <view class="complete-section" wx:elif="{{taskId && progress >= 100}}">
+      <view class="complete-icon">✅</view>
+      <text class="complete-text">下载完成！</text>
+      <button class="btn btn-primary dl-btn" bindtap="saveToAlbum" disabled="{{saving}}">{{saving ? '⏳ 保存中...' : '💾 保存到相册'}}</button>
     </view>
   </view>
 
-  <!-- 空状态 -->
-  <view class="empty-state" wx:else>
-    <view class="empty-icon">📹</view>
-    <text class="empty-state-text">输入视频链接，开始解析</text>
-  </view>
-
-  <!-- 错误提示 -->
+  <!-- 错误 -->
   <view class="error-card" wx:if="{{error}}">
     <text class="error-text">⚠️ {{error}}</text>
+    <view class="error-actions">
+      <button class="btn btn-secondary" style="flex:1" bindtap="retry">🔄 重试</button>
+      <button class="btn btn-secondary" style="flex:1" bindtap="clearUrl">✕ 清除</button>
+    </view>
   </view>
+
+  <!-- 引导到文案页 -->
+  <view class="guide-card" bindtap="goTranscript">
+    <text class="guide-text">📝 需要提取视频文案（语音转文字）？去文案页</text>
+    <text class="guide-arrow">→</text>
+  </view>
+
+  <!-- 视频预览遮罩层 -->
+  <view class="preview-overlay" wx:if="{{showPreview}}" bindtap="hidePreview">
+    <view class="preview-overlay-content" catchtap>
+      <view class="preview-overlay-header">
+        <text class="preview-overlay-title">{{previewTitle}}</text>
+        <view class="preview-close-btn" bindtap="hidePreview">✕</view>
+      </view>
+      <video
+        class="preview-video"
+        src="{{previewUrl}}"
+        controls
+        autoplay
+        show-center-play-btn="{{true}}"
+        enable-progress-gesture="{{true}}"
+        object-fit="contain"
+      />
+    </view>
+  </view>
+
+  <view class="safe-bottom"></view>
 </view>

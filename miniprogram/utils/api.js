@@ -3,91 +3,86 @@
  */
 const app = getApp();
 
-/**
- * 发送 API 请求
- * @param {string} method - HTTP 方法
- * @param {string} url - 相对路径
- * @param {object} data - 请求数据
- */
 function request(method, url, data = {}) {
   return new Promise((resolve, reject) => {
     const apiBase = app.globalData.apiBase || 'http://localhost:8800';
-    const fullUrl = `${apiBase}${url}`;
-
     wx.request({
-      url: fullUrl,
-      method: method,
-      data: data,
-      header: {
-        'Content-Type': 'application/json',
-      },
+      url: `${apiBase}${url}`,
+      method,
+      data: JSON.stringify(data),
+      dataType: 'json',
+      header: { 'Content-Type': 'application/json' },
       timeout: 60000,
       success: (res) => {
-        console.log('[API] ' + method + ' ' + url + ' -> ' + res.statusCode, res.data);
-        if (res.statusCode === 200) {
-          resolve(res.data);
-        } else {
-          const errMsg = res.data?.error || `HTTP ${res.statusCode}`;
-          reject(new Error(errMsg));
-        }
+        if (res.statusCode === 200) resolve(res.data);
+        else reject(new Error(res.data?.error || `HTTP ${res.statusCode}`));
       },
-      fail: (err) => {
-        console.error('[API] Request failed:', method, url, err);
-        reject(new Error('网络请求失败，请检查服务器地址'));
-      },
+      fail: () => reject(new Error('网络请求失败，请检查服务器地址')),
     });
   });
 }
 
-/** GET 请求 */
-function get(url, data = {}) {
-  return request('GET', url, data);
-}
+function get(url, data) { return request('GET', url, data); }
+function post(url, data) { return request('POST', url, data); }
 
-/** POST 请求 */
-function post(url, data = {}) {
-  return request('POST', url, data);
-}
-
-/**
- * 轮询任务状态
- * @param {string} url - 任务查询路径
- * @param {number} interval - 轮询间隔（毫秒）
- * @param {number} maxAttempts - 最大尝试次数
- * @param {function} onProgress - 进度回调: (status, progress, error) => void
- */
 function pollTask(url, interval = 2000, maxAttempts = 180, onProgress) {
   return new Promise((resolve, reject) => {
     let attempts = 0;
-
     function check() {
       attempts++;
-      if (attempts > maxAttempts) {
-        reject(new Error('任务超时'));
-        return;
-      }
-
-      get(url).then((res) => {
-        if (res.status === 'completed') {
-          resolve(res);
-        } else if (res.status === 'failed') {
-          reject(new Error(res.error || '任务失败'));
-        } else {
-          onProgress?.(res.status, res.progress, null);
-          setTimeout(check, interval);
-        }
-      }).catch((err) => {
-        reject(err);
-      });
+      if (attempts > maxAttempts) return reject(new Error('任务超时'));
+      get(url).then(res => {
+        if (res.status === 'completed') resolve(res);
+        else if (res.status === 'failed') reject(new Error(res.error || '任务失败'));
+        else { onProgress?.(res.status, res.progress, null); setTimeout(check, interval); }
+      }).catch(reject);
     }
-
     check();
   });
 }
 
-module.exports = {
-  request,
-  get,
-  post,
-  pollTask,
-};
+function extractUrl(text) {
+  if (!text) return '';
+  const m = text.match(/(https?:\/\/[^\s"'<>，。！？、；：\u4e00-\u9fff\uff0c-\uff1b）\)]+)/);
+  return m ? m[1] : '';
+}
+
+function detectPlatform(url) {
+  if (!url) return '';
+  if (/douyin\.com|iesdouyin\.com/.test(url)) return '抖音';
+  if (/kuaishou\.com|gifshow\.com/.test(url)) return '快手';
+  if (/xiaohongshu\.com|xhslink\.com/.test(url)) return '小红书';
+  if (/bilibili\.com/.test(url)) return 'B站';
+  if (/doubao\.com/.test(url)) return '豆包';
+  if (/weibo\.com|weibo\.cn/.test(url)) return '微博';
+  if (/tiktok\.com/.test(url)) return 'TikTok';
+  if (/youtube\.com|youtu\.be/.test(url)) return 'YouTube';
+  return '';
+}
+
+function formatDuration(seconds) {
+  if (!seconds || seconds <= 0) return '';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `0:${String(s).padStart(2, '0')}`;
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / 1048576).toFixed(1)}MB`;
+}
+
+function formatDate(ts) {
+  const d = new Date(ts);
+  const now = new Date();
+  const diff = now - d;
+  if (diff < 60000) return '刚刚';
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`;
+  if (diff < 604800000) return `${Math.floor(diff / 86400000)}天前`;
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+module.exports = { request, get, post, pollTask, extractUrl, detectPlatform, formatDuration, formatFileSize, formatDate };

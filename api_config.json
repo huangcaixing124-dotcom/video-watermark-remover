@@ -1,0 +1,58 @@
+{
+    "_comment": "视频解析 API 配置文件",
+    "_instructions": "注册任意一个视频解析 API 服务后，填写以下配置",
+
+    "provider": "custom",
+
+    "api_url": "",
+
+    "field_mapping": {
+        "title": "title",
+        "video_url": "video_url",
+        "author": "author",
+        "thumbnail": "thumbnail"
+    },
+
+    "_examples": {
+        "vvhan": {
+            "provider": "vvhan",
+            "api_url": "https://api.vvhan.com/api/douyin?url={url}",
+            "field_mapping": {
+                "title": "data.title",
+                "video_url": "data.url",
+                "author": "data.author",
+                "thumbnail": "data.cover"
+            }
+        },
+        "oioweb": {
+            "provider": "oioweb",
+            "api_url": "https://api.oioweb.cn/api/common/ShortVideo?url={url}",
+            "field_mapping": {
+                "title": "data.title",
+                "video_url": "data.url",
+                "author": "data.author",
+                "thumbnail": "data.cover"
+            }
+        },
+        "juhe": {
+            "provider": "juhe",
+            "api_url": "http://v.juhe.cn/txn/short?url={url}&key=YOUR_API_KEY",
+            "field_mapping": {
+                "title": "result.title",
+                "video_url": "result.url",
+                "author": "result.author",
+                "thumbnail": "result.cover"
+            }
+        },
+        "tianapi": {
+            "provider": "tianapi",
+            "api_url": "https://apis.tianapi.com/shortvideo/index?url={url}&key=YOUR_API_KEY",
+            "field_mapping": {
+                "title": "result.title",
+                "video_url": "result.url",
+                "author": "result.author",
+                "thumbnail": "result.cover"
+            }
+        }
+    }
+}

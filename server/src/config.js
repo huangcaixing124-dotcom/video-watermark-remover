@@ -28,7 +28,7 @@ module.exports = {
 
   // Directories
   serverDir: SERVER_DIR,
-  projectDir: path.resolve(SERVER_DIR, '..'),
+  projectDir: path.resolve(SERVER_DIR, '..', '..'),
   cacheDir: path.resolve(SERVER_DIR, process.env.CACHE_DIR || '.cache'),
 
   // Download

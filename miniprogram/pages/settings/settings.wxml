@@ -1,46 +1,62 @@
 <!-- pages/settings/settings.wxml -->
-<view class="container">
-  <!-- 标题 -->
+<view class="page {{isDark ? 'dark' : ''}}">
   <view class="page-header">
     <text class="page-title">设置</text>
   </view>
 
-  <!-- 服务器地址 -->
-  <view class="setting-card card">
-    <text class="setting-label">服务器地址</text>
-    <input
-      class="input-field"
-      placeholder="http://localhost:8800"
-      value="{{apiBase}}"
-      bindinput="onApiBaseInput"
-    />
-    <button class="btn-primary" bindtap="saveApiBase" disabled="{{saving}}">
-      {{saving ? '保存中...' : '保存'}}
-    </button>
-    <text class="hint">输入后端的 API 地址，确保服务器可访问</text>
+  <view class="card">
+    <view class="setting-item">
+      <text class="setting-item-label">服务器地址</text>
+      <input class="setting-input" placeholder="http://localhost:8800" value="{{apiBase}}" bindinput="onApiBaseInput" />
+    </view>
+    <button class="btn btn-primary" bindtap="saveApiBase" disabled="{{saving}}">{{saving ? '保存中...' : '保存'}}</button>
   </view>
 
-  <!-- 连接状态 -->
-  <view class="status-card card">
-    <view class="status-header">
-      <text class="setting-label">连接状态</text>
-      <view class="status-badge" style="background: {{connected ? '#dcfce7' : '#fef2f2'}}">
-        <text style="color: {{connected ? '#16a34a' : '#dc2626'}}">
-          {{connected ? '已连接' : '未连接'}}
-        </text>
+  <view class="card">
+    <view class="setting-item" style="border:none">
+      <view class="setting-item-left">
+        <text class="setting-item-label">连接状态</text>
+        <text class="setting-item-desc">{{connected ? '服务正常运行' : '请检查服务器地址'}}</text>
+      </view>
+      <view class="status-badge {{connected ? 'connected' : 'disconnected'}}">{{connected ? '已连接' : '未连接'}}</view>
+    </view>
+  </view>
+
+  <view class="card">
+    <text class="card-title">外观</text>
+    <view class="theme-options">
+      <view class="theme-option {{darkMode === 'auto' ? 'active' : ''}}" data-mode="auto" bindtap="setDarkMode">
+        <text class="theme-option-icon">🔄</text>
+        <text class="theme-option-label">跟随系统</text>
+      </view>
+      <view class="theme-option {{darkMode === 'light' ? 'active' : ''}}" data-mode="light" bindtap="setDarkMode">
+        <text class="theme-option-icon">☀️</text>
+        <text class="theme-option-label">浅色</text>
+      </view>
+      <view class="theme-option {{darkMode === 'dark' ? 'active' : ''}}" data-mode="dark" bindtap="setDarkMode">
+        <text class="theme-option-icon">🌙</text>
+        <text class="theme-option-label">深色</text>
       </view>
     </view>
-    <text class="hint">{{connected ? '服务正常运行' : '请检查服务器地址是否正确'}}</text>
   </view>
 
-  <!-- 关于 -->
-  <view class="about-card card">
+  <view class="card">
+    <view class="setting-item" bindtap="clearHistory">
+      <view class="setting-item-left">
+        <text class="setting-item-label">清理下载历史</text>
+        <text class="setting-item-desc">{{historyCount}} 条记录</text>
+      </view>
+      <text class="setting-item-arrow">→</text>
+    </view>
+  </view>
+
+  <view class="card">
     <text class="card-title">关于</text>
     <text class="about-text">去水印视频工具 v1.0.0</text>
-    <text class="about-text">支持抖音/快手/B站/小红书等 1700+ 平台</text>
-    <text class="about-text">视频语音转文字文案提取</text>
-    <text class="about-text" style="margin-top: 20rpx; color: #94a3b8;">
-      开源项目，仅供学习参考
-    </text>
+    <text class="about-text">支持抖音/快手/B站/小红书/豆包等平台</text>
+    <text class="about-text">视频语音转文字 · SRT字幕导出</text>
+    <text class="about-license">开源项目，仅供学习参考</text>
   </view>
+
+  <view class="safe-bottom"></view>
 </view>

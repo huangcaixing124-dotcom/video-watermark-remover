@@ -15,13 +15,9 @@ const config = require('../config');
 /** Local Python API script path (uses yt-dlp). */
 const LOCAL_PYTHON_API = path.join(config.projectDir, 'douyin-api.py');
 
-/** Known free Douyin proxy API templates (external). */
+/** Known free Douyin proxy API templates (external) - most are unreliable, yt-dlp with cookies is preferred. */
 const DEFAULT_PROXY_APIS = [
-  'https://api.douyin.wtf/api/convert?url={url}',
-  'https://api.douyin.wtf/api/video?url={url}',
-  'https://ttsl.moe/api/douyin?url={url}',
-  'https://www.douyin.wtf/api/video?url={url}',
-  'https://api.douyin.wtf/api/info?url={url}',
+  // yt-dlp with cookies is the primary method. Proxy APIs are unreliable fallbacks.
 ];
 
 /**

@@ -1,62 +1,82 @@
 <!-- pages/transcript/transcript.wxml -->
-<view class="container">
-  <!-- 标题 -->
+<view class="page {{isDark ? 'dark' : ''}}">
   <view class="page-header">
-    <text class="page-title">视频文案提取</text>
-    <text class="page-subtitle">视频语音转文字，支持导出SRT字幕</text>
+    <text class="page-title">文案提取</text>
+    <text class="page-subtitle">视频语音转文字 · 导出SRT字幕</text>
   </view>
 
-  <!-- URL 输入区 -->
-  <view class="input-card card" wx:if="{{!taskId}}">
-    <text class="input-label">视频链接</text>
-    <textarea
-      class="input-field"
-      placeholder="粘贴视频链接，如 https://v.douyin.com/xxxxx"
-      value="{{url}}"
-      bindinput="onUrlInput"
-      auto-focus
-    />
-    <button class="btn-primary" bindtap="startTranscript" disabled="{{loading}}">
-      {{loading ? '处理中...' : '提取文案'}}
-    </button>
-    <text class="hint">需要下载视频并提取音频，可能需要几分钟</text>
+  <!-- 剪贴板检测 -->
+  <view class="detect-card" wx:if="{{showDetect}}">
+    <view class="detect-row">
+      <view class="detect-icon">📋</view>
+      <view class="detect-info">
+        <text class="detect-label">检测到视频链接</text>
+        <text class="detect-url">{{detectedUrl}}</text>
+      </view>
+    </view>
+    <view class="detect-actions">
+      <button class="btn btn-small" style="background:var(--primary);color:white;flex:1" bindtap="useDetectedUrl" catchtap>一键粘贴使用</button>
+      <button class="btn btn-small" style="background:rgba(255,255,255,0.3);color:white;flex:0.5" bindtap="dismissDetect" catchtap>忽略</button>
+    </view>
+  </view>
+
+  <!-- 输入区域（始终可见） -->
+  <view class="card">
+    <view class="input-label">视频链接</view>
+    <view class="input-bar">
+      <input class="input-field-url" placeholder="https://v.douyin.com/..." value="{{url}}" bindinput="onUrlInput" />
+      <view class="input-bar-actions">
+        <view class="input-btn" bindtap="pasteFromClipboard">📋</view>
+        <view class="input-btn" wx:if="{{url}}" bindtap="clearUrl">✕</view>
+      </view>
+    </view>
+    <button class="btn btn-primary" bindtap="startTranscript" disabled="{{loading || !url}}">{{loading ? '⏳ 处理中...' : '📝 提取文案'}}</button>
+    <button class="btn btn-ghost" style="width:100%;margin-top:12rpx;padding:16rpx" bindtap="pasteFromClipboard">📋 一键粘贴链接</button>
+    <text class="text-tertiary" style="font-size:22rpx;text-align:center;display:block;margin-top:16rpx">需要下载视频并提取音频，可能需要几分钟</text>
   </view>
 
   <!-- 处理进度 -->
-  <view class="progress-card card" wx:else>
-    <view class="progress-header">
-      <text class="status-text">{{statusText}}</text>
-      <text class="progress-text">{{progress}}%</text>
+  <view class="card" wx:if="{{taskId && !text && !error}}">
+    <view class="progress-section">
+      <view class="progress-row">
+        <text class="progress-text">{{statusText}}</text>
+        <text class="progress-pct">{{progress}}%</text>
+      </view>
+      <view class="progress-bar"><view class="progress-fill" style="width:{{progress}}%"></view></view>
+      <text class="progress-hint">{{statusHint}}</text>
     </view>
-    <view class="progress-bar">
-      <view class="progress-bar-fill" style="width: {{progress}}%" />
-    </view>
-    <text class="progress-hint">{{progressHint}}</text>
   </view>
 
-  <!-- 文案展示 -->
-  <view class="result-card card" wx:if="{{text}}">
-    <view class="result-header">
-      <text class="card-title">提取结果</text>
-      <view class="action-buttons">
-        <button class="btn-secondary" size="mini" bindtap="copyText">📋 复制</button>
-        <button class="btn-secondary" size="mini" bindtap="exportSrt">💾 导出SRT</button>
+  <!-- 文案预览 -->
+  <view class="card" wx:if="{{text}}">
+    <view class="result-bar">
+      <text class="card-title" style="margin-bottom:0">提取结果</text>
+      <view class="result-actions">
+        <button class="btn btn-small btn-ghost" bindtap="copyText">📋 复制</button>
+        <button class="btn btn-small btn-ghost" bindtap="exportSrt">💾 SRT</button>
+        <button class="btn btn-small btn-ghost" bindtap="exportTxt">📄 TXT</button>
+        <button class="btn btn-small" style="color:var(--error);font-size:22rpx;padding:12rpx 16rpx" bindtap="clearUrl">✕ 清除</button>
       </view>
     </view>
-    <scroll-view scroll-y class="text-scroll">
-      <text class="transcript-text">{{text}}</text>
+    <scroll-view scroll-y class="text-preview">
+      <text class="text-content">{{text}}</text>
     </scroll-view>
   </view>
 
-  <!-- 错误提示 -->
+  <!-- 错误 -->
   <view class="error-card" wx:if="{{error}}">
     <text class="error-text">⚠️ {{error}}</text>
-    <button class="btn-secondary" bindtap="resetTask">重新开始</button>
+    <view class="error-actions">
+      <button class="btn btn-secondary" style="flex:1" bindtap="retry">🔄 重试</button>
+      <button class="btn btn-secondary" style="flex:1" bindtap="clearUrl">✕ 清除</button>
+    </view>
   </view>
 
-  <!-- 空状态 -->
-  <view class="empty-state" wx:if="{{!taskId && !text && !error}}">
-    <view class="empty-icon">🎙️</view>
-    <text class="empty-state-text">输入视频链接，开始提取文案</text>
+  <!-- 引导到下载页 -->
+  <view class="guide-card" bindtap="goDownload">
+    <text class="guide-text">⬇️ 需要下载无水印视频？去下载页</text>
+    <text class="guide-arrow">→</text>
   </view>
+
+  <view class="safe-bottom"></view>
 </view>

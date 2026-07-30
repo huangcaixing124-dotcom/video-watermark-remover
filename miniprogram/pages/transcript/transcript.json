@@ -1,5 +1,4 @@
 {
   "navigationBarTitleText": "文案提取",
-  "navigationBarBackgroundColor": "#ffffff",
-  "backgroundColor": "#f8fafc"
+  "usingComponents": {}
 }

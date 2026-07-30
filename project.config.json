@@ -42,9 +42,9 @@
     "swc": false,
     "disableSWC": true
   },
-  "appid": "wx5d3d975f7d80ce93",
+  "appid": "wx39c6dab38306e583",
   "projectname": "去水印视频工具",
-  "libVersion": "3.0.0",
+  "libVersion": "3.16.2",
   "condition": {},
   "compileType": "miniprogram",
   "simulatorPluginLibVersion": {},

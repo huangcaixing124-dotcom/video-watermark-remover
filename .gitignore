@@ -32,6 +32,8 @@ logs/
 # Cache
 .cache/
 cache/
+.browser_data/
+.browser_service.pid
 
 # Environment
 .env

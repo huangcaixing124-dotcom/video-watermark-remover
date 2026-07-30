@@ -20,16 +20,17 @@ let activeDownloads = 0;
 const DOWNLOAD_DIR = path.join(config.cacheDir, 'downloads');
 fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 
-/** Create a download task. */
-function createTask(url) {
+/** Create a download task with optional pre-populated info. */
+function createTask(url, info = null) {
   const taskId = generateId();
   const task = {
     id: taskId,
     url,
     status: 'pending',
     progress: 0,
-    title: null,
-    platform: null,
+    title: info?.title || null,
+    platform: info?.platform || null,
+    directUrl: info?.directUrl || null,
     filePath: null,
     error: null,
     createdAt: Date.now(),
@@ -57,12 +58,14 @@ async function startDownload(taskId) {
     const outputDir = path.join(DOWNLOAD_DIR, taskId);
     fs.mkdirSync(outputDir, { recursive: true });
 
-    const result = await downloadVideo(task.url, outputDir, (pct, status) => {
-      if (tasks.has(taskId)) {
-        tasks.get(taskId).progress = Math.round(pct);
-        if (status) tasks.get(taskId).status = 'downloading';
-      }
-    });
+    // Build options for downloadVideo
+    const downloadOptions = {};
+    if (task.directUrl) {
+      downloadOptions.directUrl = task.directUrl;
+      console.log(`[downloader] Using direct URL for task ${taskId}`);
+    }
+
+    const result = await downloadVideo(task.url, outputDir, downloadOptions);
 
     task.filePath = result.filePath;
     task.status = 'completed';
@@ -108,12 +111,21 @@ function getTaskFile(taskId) {
   return task.filePath;
 }
 
-/** Cleanup old completed/failed tasks. */
+/** Cleanup old completed/failed tasks AND timeout hung downloads. */
 function cleanup() {
   const now = Date.now();
   const ttlMs = config.completedTaskTTLSeconds * 1000;
+  const downloadTimeoutMs = (config.downloadTimeout || 300) * 1000; // default 5 min
 
   for (const [id, task] of tasks) {
+    // Timeout hung downloads
+    if (task.status === 'downloading' && now - task.createdAt > downloadTimeoutMs) {
+      console.warn(`[downloader] Task ${id} timed out after ${downloadTimeoutMs/1000}s`);
+      task.status = 'failed';
+      task.error = '下载超时，请重试。如果问题持续，可能需要浏览器辅助下载。';
+    }
+
+    // Cleanup old completed/failed tasks
     if (task.status === 'completed' || task.status === 'failed') {
       if (now - task.createdAt > ttlMs) {
         // Delete files
