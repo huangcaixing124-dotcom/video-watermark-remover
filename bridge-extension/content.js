@@ -1,71 +1,67 @@
-// Bridge content script - runs on Douyin and Doubao pages
-// Uses MAIN world script injection to interact with page
+// Bridge content script - runs on Kuaishou pages
+console.log('[Bridge] Content script loaded on', location.hostname);
 
-// Inject a script into the MAIN world to handle interactions
-function injectMainScript() {
-  const script = document.createElement('script');
-  script.textContent = `
-    // Auto-click download button when it appears
-    function waitForButton() {
-      const check = setInterval(() => {
-        const btn = document.querySelector('.douyin-download-button');
-        if (btn) {
-          clearInterval(check);
-          console.log('[Bridge] Found button, clicking...');
-          btn.click();
-        }
-      }, 1000);
-      setTimeout(() => clearInterval(check), 30000);
-    }
-
-    // Also try to get video URL from the page
-    function captureVideoUrl() {
-      const origFetch = window.fetch;
-      window.fetch = function() {
-        const url = arguments[0];
-        if (typeof url === 'string' && url.includes('aweme/v1/web/aweme/detail')) {
-          return origFetch.apply(this, arguments).then(async (response) => {
-            const clone = response.clone();
-            try {
-              const data = await clone.json();
-              if (data.aweme_detail && data.aweme_detail.video) {
-                const play = data.aweme_detail.video.play_addr;
-                if (play && play.url_list && play.url_list.length > 0) {
-                  window.postMessage({
-                    type: 'BRIDGE_VIDEO_URL',
-                    url: play.url_list[0],
-                    title: data.aweme_detail.desc || ''
-                  }, '*');
-                }
-              }
-            } catch(e) {}
-            return response;
-          });
-        }
-        return origFetch.apply(this, arguments);
-      };
-    }
-
-    // Start
-    if (window.location.hostname.includes('douyin.com')) {
-      setTimeout(waitForButton, 2000);
-      captureVideoUrl();
-    }
-  `;
-  document.documentElement.appendChild(script);
-  script.remove();
+// Send page cookies to background script
+const cookies = document.cookie;
+if (cookies) {
+  console.log('[Bridge] Page cookies:', cookies.length, 'chars');
+  chrome.runtime.sendMessage({ type: 'PAGE_COOKIES', cookies: cookies, url: location.href });
 }
 
-// Listen for video URL messages from the MAIN world
+// Inject MAIN world script for fetch interception
+const script = document.createElement('script');
+script.textContent = `
+  console.log('[Bridge] MAIN world script running');
+
+  // Intercept all fetch responses
+  const origFetch = window.fetch;
+  window.fetch = function() {
+    const url = typeof arguments[0] === 'string' ? arguments[0] : arguments[0]?.url;
+    return origFetch.apply(this, arguments).then(async (response) => {
+      if (url && (url.includes('graphql') || url.includes('photo/detail'))) {
+        try {
+          const clone = response.clone();
+          const data = await clone.json();
+          // Search for video URL in the response
+          function findUrl(obj) {
+            if (!obj || typeof obj !== 'object') return null;
+            for (const val of Object.values(obj)) {
+              if (typeof val === 'string' && (val.includes('.mp4') || val.includes('video/') || val.includes('play/'))) return val;
+              const result = findUrl(val);
+              if (result) return result;
+            }
+            return null;
+          }
+          const videoUrl = findUrl(data) || data?.data?.visionVideoDetail?.photo?.photoUrl;
+          if (videoUrl) {
+            console.log('[Bridge] Found video URL:', videoUrl.substring(0, 60));
+            window.postMessage({ type: 'BRIDGE_VIDEO_URL', url: videoUrl, title: document.title || '' }, '*');
+          }
+        } catch(e) {}
+      }
+      return response;
+    });
+  };
+
+  // Also try to find video element after page loads
+  setTimeout(() => {
+    const v = document.querySelector('video');
+    if (v && v.src && v.src.startsWith('http')) {
+      window.postMessage({ type: 'BRIDGE_VIDEO_URL', url: v.src, title: document.title || '' }, '*');
+    }
+  }, 5000);
+`;
+document.documentElement.appendChild(script);
+script.remove();
+
+// Listen for video URL messages
 window.addEventListener('message', (event) => {
   if (event.data.type === 'BRIDGE_VIDEO_URL') {
-    console.log('[Bridge] Got video URL from MAIN world');
+    console.log('[Bridge] Got video URL:', (event.data.url || '').substring(0, 60));
     chrome.runtime.sendMessage({
       type: 'VIDEO_URL',
       url: event.data.url,
-      title: event.data.title
+      title: event.data.title || document.title
     });
   }
 });
-
-injectMainScript();

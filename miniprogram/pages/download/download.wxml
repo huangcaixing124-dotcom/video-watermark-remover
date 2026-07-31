@@ -6,39 +6,22 @@
     <text class="page-subtitle">抖音/快手/B站/小红书/豆包 无水印下载</text>
   </view>
 
-  <!-- 剪贴板检测 -->
-  <view class="detect-card" wx:if="{{showDetect}}" bindtap="useDetectedUrl">
-    <view class="detect-row">
-      <view class="detect-icon">📋</view>
-      <view class="detect-info">
-        <text class="detect-label">检测到视频链接</text>
-        <text class="detect-url">{{detectedUrl}}</text>
-      </view>
-      <text class="detect-platform">{{detectedPlatform}}</text>
-    </view>
-    <view class="detect-actions">
-      <button class="btn btn-small" style="background:var(--primary);color:white;flex:1" bindtap="useDetectedUrl" catchtap>一键粘贴使用</button>
-      <button class="btn btn-small" style="background:rgba(255,255,255,0.3);color:white;flex:0.5" bindtap="dismissDetect" catchtap>忽略</button>
-    </view>
-  </view>
-
   <!-- 输入区域 -->
   <view class="card">
     <view class="input-label">视频链接</view>
     <view class="input-bar">
       <input class="input-field-url" placeholder="https://v.douyin.com/..." value="{{url}}" bindinput="onUrlInput" />
-      <view class="input-bar-actions">
-        <view class="input-btn" bindtap="pasteFromClipboard">📋</view>
-        <view class="input-btn" wx:if="{{url}}" bindtap="clearUrl">✕</view>
-      </view>
+      <view class="input-btn" wx:if="{{url}}" bindtap="clearUrl">✕</view>
     </view>
-    <button class="btn btn-primary" bindtap="parseVideo" disabled="{{loading || !url}}" wx:if="{{!videoInfo && !taskId && !error}}">
-      {{loading ? '⏳ 解析中...' : '🔍 解析视频'}}
-    </button>
-    <button class="btn btn-ghost" style="width:100%;margin-top:12rpx;padding:16rpx" bindtap="pasteFromClipboard">📋 一键粘贴链接</button>
+    <view class="action-row">
+      <button class="btn btn-primary action-btn" bindtap="pasteAndDownload" disabled="{{loading || downloading || saving || (taskId && progress >= 100)}}">
+        {{loading ? '⏳ 解析中...' : downloading ? '⏳ 下载中...' : '📋 粘贴并去水印'}}
+      </button>
+      <button class="btn btn-secondary action-btn-secondary" wx:if="{{url || videoInfo || taskId || error}}" bindtap="newDownload">清空链接</button>
+    </view>
   </view>
 
-  <!-- 视频预览 -->
+  <!-- 视频信息 -->
   <view class="card" wx:if="{{videoInfo && !error}}">
     <view class="preview-row" bindtap="showPreview" style="cursor:pointer">
       <image class="preview-thumb" src="{{videoInfo.thumbnailUrl || ''}}" mode="aspectFill" wx:if="{{videoInfo.thumbnailUrl}}" />
@@ -53,12 +36,9 @@
         <text style="color:var(--primary);font-size:22rpx;margin-top:12rpx;display:block">▶ 点击预览视频</text>
       </view>
     </view>
-    <!-- 下载按钮 -->
-    <button class="btn btn-primary dl-btn" bindtap="downloadVideo" disabled="{{downloading}}" wx:if="{{!taskId}}">
-      {{downloading ? '⏳ 下载中...' : '⬇️ 下载无水印视频'}}
-    </button>
+
     <!-- 下载进度 -->
-    <view class="progress-section" wx:elif="{{taskId && progress < 100}}">
+    <view class="progress-section" wx:if="{{taskId && progress < 100}}">
       <view class="progress-row">
         <text class="progress-text">{{statusText}}</text>
         <text class="progress-pct">{{progress}}%</text>
@@ -66,10 +46,12 @@
       <view class="progress-bar"><view class="progress-fill" style="width:{{progress}}%"></view></view>
       <text class="progress-hint">{{statusHint}}</text>
     </view>
+
     <!-- 下载完成 -->
     <view class="complete-section" wx:elif="{{taskId && progress >= 100}}">
       <view class="complete-icon">✅</view>
       <text class="complete-text">下载完成！</text>
+      <text class="complete-hint">点击下方按钮保存到手机相册</text>
       <button class="btn btn-primary dl-btn" bindtap="saveToAlbum" disabled="{{saving}}">{{saving ? '⏳ 保存中...' : '💾 保存到相册'}}</button>
     </view>
   </view>
@@ -79,7 +61,7 @@
     <text class="error-text">⚠️ {{error}}</text>
     <view class="error-actions">
       <button class="btn btn-secondary" style="flex:1" bindtap="retry">🔄 重试</button>
-      <button class="btn btn-secondary" style="flex:1" bindtap="clearUrl">✕ 清除</button>
+      <button class="btn btn-secondary" style="flex:1" bindtap="newDownload">清空链接</button>
     </view>
   </view>
 

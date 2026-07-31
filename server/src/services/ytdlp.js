@@ -58,7 +58,7 @@ function parseVideoInfo(url, options = {}) {
 
     args.push(url);
 
-    execFile(_findYtdlp(), args, { timeout: 30000, maxBuffer: 2 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(_findYtdlp(), args, { timeout: 30000, maxBuffer: 2 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       if (err) {
         const stderrStr = stderr?.toString() || '';
         const msg = stderrStr.includes('Unsupported URL')
@@ -111,8 +111,9 @@ function runPythonScript(scriptPath, url) {
   return new Promise((resolve, reject) => {
     console.log(`[python] Using: ${path.basename(scriptPath)} for ${url}`);
     const proc = spawn('python', [scriptPath, url], {
-      timeout: 120000,  // 2 min timeout
+      timeout: 120000,
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
     });
 
     let stdout = '';
@@ -277,7 +278,7 @@ function _getVideoInfoWithYtdlp(url, options = {}) {
 
     args.push(url);
 
-    execFile(_findYtdlp(), args, { timeout: 60000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(_findYtdlp(), args, { timeout: 60000, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       if (err) {
         const stderrStr = stderr?.toString() || '';
         const msg = stderrStr.includes('Unsupported URL')
@@ -501,6 +502,7 @@ function downloadFromUrl(videoUrl, outputPath, options) {
     const proc = spawn('ffmpeg', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 300000,
+      windowsHide: true,
     });
 
     let stderr = '';
@@ -556,7 +558,8 @@ function _downloadWithYtdlp(url, outputPath, options = {}) {
 
     const proc = spawn(_findYtdlp(), args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 300000, // 5 min
+      timeout: 300000,
+      windowsHide: true,
     });
 
     let stderr = '';
@@ -605,7 +608,7 @@ function extractAudio(videoPath, audioPath) {
       audioPath,
     ];
 
-    execFile('ffmpeg', args, { timeout: 300000 }, (err) => {
+    execFile('ffmpeg', args, { timeout: 300000, windowsHide: true }, (err) => {
       if (err) return reject(new Error(`音频提取失败: ${err.message}`));
       resolve(audioPath);
     });
@@ -627,4 +630,4 @@ function _platformLabel(extractor) {
   return labels[extractor?.toUpperCase()] || extractor || '其他';
 }
 
-module.exports = { parseVideoInfo, getVideoInfo, downloadVideo, extractAudio };
+module.exports = { parseVideoInfo, getVideoInfo, downloadVideo, extractAudio, downloadFromUrl };

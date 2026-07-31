@@ -239,6 +239,7 @@ function downloadVideoWithYTDL(url, outputDir) {
     const proc = spawn('yt-dlp', args, {
       timeout: 300000,
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
     });
 
     let stderr = '';
@@ -270,7 +271,7 @@ function extractAudio(videoPath, audioPath) {
       '-ar', '16000',
       '-ac', '1',
       audioPath,
-    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    ], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
 
     let stderr = '';
     proc.stderr.on('data', data => { stderr += data.toString(); });
@@ -300,7 +301,7 @@ function runWhisper(audioPath, outputDir, modelSize, language, device, computeTy
       language,
       device,
       computeType,
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 
     let stdout = '';
     let stderr = '';

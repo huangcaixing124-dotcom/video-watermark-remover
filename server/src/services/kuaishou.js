@@ -1,19 +1,15 @@
 /**
  * Kuaishou video service - resolves Kuaishou video URLs.
  *
- * Uses the Kuaishou internal API with cookies from cookies.txt.
- * Falls back to bridge if API is not available.
+ * Uses Playwright (via extract_video.py) to open the Kuaishou page
+ * and extract the video URL from the page data.
  */
-const https = require('https');
-const http = require('http');
+const { execFile } = require('child_process');
 const path = require('path');
-const fs = require('fs');
 const config = require('../config');
 
 /**
  * Extract video ID from a Kuaishou URL.
- * Format: https://www.kuaishou.com/short-video/{videoId}
- *         https://v.kuaishou.com/{videoId}
  */
 function extractVideoId(url) {
   const m = url.match(/kuaishou\.com\/(?:short-video\/)?([a-zA-Z0-9]+)/);
@@ -25,86 +21,69 @@ function isKuaishouUrl(url) {
 }
 
 /**
- * Read cookies from cookies.txt.
+ * Get video info using Playwright (extract_video.py).
+ * This opens the Kuaishou page in a headless browser and extracts the video URL.
  */
-function readCookies() {
-  const cookiesPath = path.join(config.projectDir, 'cookies.txt');
-  if (!fs.existsSync(cookiesPath)) return '';
-  try {
-    const content = fs.readFileSync(cookiesPath, 'utf-8');
-    const valid = [];
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const parts = trimmed.split('\t');
-      if (parts.length >= 7 && (parts[0].includes('kuaishou') || parts[0].includes('gifshow'))) {
-        valid.push(`${encodeURIComponent(parts[5])}=${encodeURIComponent(parts[6])}`);
-      }
-    }
-    return valid.join('; ');
-  } catch { return ''; }
-}
-
-/**
- * Try to get video info from Kuaishou page.
- * Kuaishou is a dynamic SPA, so we try multiple approaches.
- */
-async function getVideoInfo(videoId) {
-  // Method 1: Try the photo detail API
-  try {
-    const result = await _callAPI('https://www.kuaishou.com/rest/v2/photo/detail', {
-      photoId: videoId,
-      isShortVideo: 'true',
-    });
-    if (result && result.photo) return result;
-  } catch {}
-
-  // Method 2: Try the feed API
-  try {
-    const result = await _callAPI('https://www.kuaishou.com/rest/v2/feed/photo', {
-      photoId: videoId,
-      type: 'shortVideo',
-    });
-    if (result && result.photo) return result;
-  } catch {}
-
-  return null;
-}
-
-function _callAPI(apiUrl, body) {
+function getVideoInfo(url) {
   return new Promise((resolve, reject) => {
-    const url = new URL(apiUrl);
-    const postData = JSON.stringify(body);
-    const cookies = readCookies();
+    const scriptPath = path.join(config.projectDir, 'extract_video.py');
+    console.log(`[kuaishou] Calling extract_video.py for: ${url}`);
 
-    const options = {
-      hostname: url.hostname,
-      path: url.pathname,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://www.kuaishou.com/',
-        'Cookie': cookies || 'kpf=PC_WEB; clientid=3',
-        'Content-Length': Buffer.byteLength(postData),
-      },
-      timeout: 10000,
-    };
+    const proc = execFile('C:/Python311/python.exe', [scriptPath, url], {
+      timeout: 45000,
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+    }, (err, stdout, stderr) => {
+      if (err) {
+        console.log(`[kuaishou] extract_video.py failed: ${err.message}`);
+        // Try to parse partial output
+        if (stdout) {
+          try {
+            const result = JSON.parse(stdout);
+            if (result.video_url) {
+              console.log(`[kuaishou] Got video URL from partial output`);
+              return resolve(formatResult(result));
+            }
+          } catch {}
+        }
+        return reject(new Error('快手解析失败: ' + (err.message || '未知错误')));
+      }
 
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', (chunk) => { data += chunk.toString(); });
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch { reject(new Error('Invalid JSON')); }
-      });
+      try {
+        const result = JSON.parse(stdout);
+        if (result.error) {
+          return reject(new Error(result.error));
+        }
+        if (!result.video_url) {
+          return reject(new Error('未找到视频地址'));
+        }
+        console.log(`[kuaishou] Successfully extracted video URL`);
+        resolve(formatResult(result));
+      } catch (e) {
+        reject(new Error(`解析快手响应失败: ${e.message}`));
+      }
     });
 
-    req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
-    req.on('error', reject);
-    req.write(postData);
-    req.end();
+    // Log stderr for debugging
+    proc.stderr?.on('data', (data) => {
+      console.log(`[kuaishou] ${data.toString().trim()}`);
+    });
   });
+}
+
+function formatResult(result) {
+  return {
+    title: result.title || '快手视频',
+    author: result.author || 'Unknown',
+    duration: result.duration || 0,
+    thumbnailUrl: result.thumbnail || '',
+    platform: '快手',
+    platformLabel: '快手',
+    videoId: '',
+    webpageUrl: '',
+    directUrl: result.video_url || '',
+    hasOriginal: !!result.video_url,
+  };
 }
 
 module.exports = { getVideoInfo, extractVideoId, isKuaishouUrl };

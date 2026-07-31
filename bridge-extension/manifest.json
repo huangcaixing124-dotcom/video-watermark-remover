@@ -1,23 +1,29 @@
 {
   "manifest_version": 3,
-  "name": "Douyin Video Bridge",
-  "version": "1.1",
+  "name": "Video Download Bridge",
+  "version": "1.5",
   "permissions": [
     "webRequest",
     "downloads",
     "tabs",
-    "alarms"
+    "alarms",
+    "cookies",
+    "storage"
   ],
   "host_permissions": [
     "https://*.douyin.com/*",
     "https://*.douyinvod.com/*",
     "https://*.doubao.com/*",
+    "https://*.kuaishou.com/*",
+    "https://*.kwimgs.com/*",
+    "https://*.yximgs.com/*",
     "http://localhost/*"
   ],
   "content_scripts": [{
-    "matches": ["https://*.douyin.com/*", "https://*.doubao.com/*"],
+    "matches": ["https://*.kuaishou.com/*"],
     "js": ["content.js"],
-    "run_at": "document_end"
+    "run_at": "document_end",
+    "all_frames": true
   }],
   "background": {
     "service_worker": "background.js"

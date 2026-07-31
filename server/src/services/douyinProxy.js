@@ -68,7 +68,7 @@ function resolveWithLocalAPI(url) {
       return;
     }
 
-    execFile('python', [scriptPath, url], { timeout: 60000 }, (err, stdout, stderr) => {
+    execFile('python', [scriptPath, url], { timeout: 60000, windowsHide: true }, (err, stdout, stderr) => {
       if (err) {
         reject(new Error(`Local API error: ${stderr.slice(0, 200)}`));
         return;
