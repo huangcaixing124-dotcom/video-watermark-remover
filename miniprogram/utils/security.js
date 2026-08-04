@@ -33,23 +33,34 @@ function checkText(content) {
       return resolve({ safe: true, errCode: 0, errMsg: 'empty after trim' });
     }
 
-    wx.msgSecCheck({
-      content: trimmed.slice(0, 500), // API 限制 500KB，取前500字符足够
-      success(res) {
-        // errCode 0 表示安全，87014 表示内容违规
-        if (res.errCode === 0) {
-          resolve({ safe: true, errCode: 0, errMsg: 'safe' });
-        } else {
-          console.warn('[security] msgSecCheck blocked:', res.errCode, res.errMsg);
-          resolve({ safe: false, errCode: res.errCode, errMsg: res.errMsg || 'risky content' });
-        }
-      },
-      fail(err) {
-        // API 调用失败（如网络问题、版本不支持等），不阻塞用户操作
-        console.warn('[security] msgSecCheck call failed:', err.errMsg);
-        resolve({ safe: true, errCode: -1, errMsg: err.errMsg || 'api call failed' });
-      },
-    });
+    // 检查 API 是否可用（开发者工具中可能不可用）
+    if (typeof wx.msgSecCheck !== 'function') {
+      console.warn('[security] msgSecCheck not available (dev tools or old base lib)');
+      return resolve({ safe: true, errCode: -1, errMsg: 'api not available' });
+    }
+
+    try {
+      wx.msgSecCheck({
+        content: trimmed.slice(0, 500), // API 限制 500KB，取前500字符足够
+        success(res) {
+          // errCode 0 表示安全，87014 表示内容违规
+          if (res.errCode === 0) {
+            resolve({ safe: true, errCode: 0, errMsg: 'safe' });
+          } else {
+            console.warn('[security] msgSecCheck blocked:', res.errCode, res.errMsg);
+            resolve({ safe: false, errCode: res.errCode, errMsg: res.errMsg || 'risky content' });
+          }
+        },
+        fail(err) {
+          // API 调用失败（如网络问题、版本不支持等），不阻塞用户操作
+          console.warn('[security] msgSecCheck call failed:', err.errMsg);
+          resolve({ safe: true, errCode: -1, errMsg: err.errMsg || 'api call failed' });
+        },
+      });
+    } catch (err) {
+      console.warn('[security] msgSecCheck exception:', err.message);
+      resolve({ safe: true, errCode: -1, errMsg: err.message });
+    }
   });
 }
 
@@ -63,17 +74,23 @@ function checkImage(filePath) {
     if (!filePath) {
       return resolve({ safe: true, errCode: 0 });
     }
-
-    wx.imgSecCheck({
-      media: { filePath },
-      success(res) {
-        resolve({ safe: res.errCode === 0, errCode: res.errCode });
-      },
-      fail(err) {
-        console.warn('[security] imgSecCheck failed:', err.errMsg);
-        resolve({ safe: true, errCode: -1 });
-      },
-    });
+    if (typeof wx.imgSecCheck !== 'function') {
+      return resolve({ safe: true, errCode: -1 });
+    }
+    try {
+      wx.imgSecCheck({
+        media: { filePath },
+        success(res) {
+          resolve({ safe: res.errCode === 0, errCode: res.errCode });
+        },
+        fail(err) {
+          console.warn('[security] imgSecCheck failed:', err.errMsg);
+          resolve({ safe: true, errCode: -1 });
+        },
+      });
+    } catch (err) {
+      resolve({ safe: true, errCode: -1 });
+    }
   });
 }
 
@@ -90,19 +107,24 @@ function checkMediaAsync(filePath, mediaType = 'video') {
     if (!filePath) {
       return resolve({ traceId: '', errCode: 0 });
     }
-
-    wx.mediaCheckAsync({
-      mediaType,
-      media: { filePath },
-      success(res) {
-        resolve({ traceId: res.traceId || '', errCode: res.errCode });
-      },
-      fail(err) {
-        console.warn('[security] mediaCheckAsync failed:', err.errMsg);
-        resolve({ traceId: '', errCode: -1 });
-      },
-    });
-  });
+    if (typeof wx.mediaCheckAsync !== 'function') {
+      return resolve({ traceId: '', errCode: -1 });
+    }
+    try {
+      wx.mediaCheckAsync({
+        mediaType,
+        media: { filePath },
+        success(res) {
+          resolve({ traceId: res.traceId || '', errCode: res.errCode });
+        },
+        fail(err) {
+          console.warn('[security] mediaCheckAsync failed:', err.errMsg);
+          resolve({ traceId: '', errCode: -1 });
+        },
+      });
+    } catch (err) {
+      resolve({ traceId: '', errCode: -1 });
+    }
 }
 
 module.exports = { checkText, checkImage, checkMediaAsync };
