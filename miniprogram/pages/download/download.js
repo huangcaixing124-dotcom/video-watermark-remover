@@ -1,5 +1,5 @@
 // pages/download/download.js
-const { extractUrl, detectPlatform, post, pollTask } = require('../../utils/api');
+const { extractUrl, detectPlatform, post, pollTask, secureUrl } = require('../../utils/api');
 const { checkText } = require('../../utils/security');
 
 Page({
@@ -125,7 +125,7 @@ Page({
           getApp().addToHistory({
             url, title: res.data.title, platform: res.data.platform,
             durationFormatted: res.data.durationFormatted,
-            thumbnailUrl: res.data.thumbnailUrl, taskId,
+            thumbnailUrl: secureUrl(res.data.thumbnailUrl), taskId,
           });
           wx.showToast({ title: '下载完成', icon: 'success' });
         } catch (pollErr) {

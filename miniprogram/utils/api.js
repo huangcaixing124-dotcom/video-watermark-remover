@@ -85,4 +85,10 @@ function formatDate(ts) {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-module.exports = { request, get, post, pollTask, extractUrl, detectPlatform, formatDuration, formatFileSize, formatDate };
+/** Ensure a URL uses HTTPS (for thumbnail compatibility). */
+function secureUrl(url) {
+  if (!url || typeof url !== 'string') return url;
+  return url.replace(/^http:\/\//i, 'https://');
+}
+
+module.exports = { request, get, post, pollTask, extractUrl, detectPlatform, formatDuration, formatFileSize, formatDate, secureUrl };
