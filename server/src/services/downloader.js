@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const { generateId, sleep, estimateSizeMB } = require('../utils/helpers');
 const { downloadVideo } = require('./ytdlp');
+const { runWatermarkRemoval } = require('./bridgeQueue');
 const config = require('../config');
 
 /** In-memory task store. */
@@ -68,6 +69,27 @@ async function startDownload(taskId) {
     const result = await downloadVideo(task.url, outputDir, downloadOptions);
 
     task.filePath = result.filePath;
+
+    // 尝试去除水印
+    if (task.url) {
+      let cleanedPath = null;
+      try {
+        if (task.url.includes('doubao.com')) {
+          cleanedPath = path.join(outputDir, 'cleaned.mp4');
+          await runWatermarkRemoval(result.filePath, cleanedPath);
+        } else if (task.url.includes('kuaishou.com')) {
+          // 快手视频 url 来自桥接扩展，已经是无水印的 CDN 链接，无需额外处理
+          cleanedPath = null;
+        }
+        if (cleanedPath && fs.existsSync(cleanedPath) && fs.statSync(cleanedPath).size > 1000) {
+          task.filePath = cleanedPath;
+          console.log(`[downloader] Watermark removed for task ${taskId}`);
+        }
+      } catch (wmErr) {
+        console.error(`[downloader] Watermark removal failed: ${wmErr.message}`);
+      }
+    }
+
     task.status = 'completed';
     task.progress = 100;
   } catch (err) {
@@ -78,13 +100,6 @@ async function startDownload(taskId) {
     }
   } finally {
     activeDownloads--;
-    // Queue next pending task
-    for (const t of tasks.values()) {
-      if (t.status === 'pending' && typeof t._url === 'string') {
-        // Will be restarted by caller if needed
-        break;
-      }
-    }
   }
 }
 

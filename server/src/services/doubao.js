@@ -13,6 +13,11 @@ const config = require('../config');
 const API_URL = 'https://www.doubao.com/samantha/media/get_play_info';
 const API_PARAMS = 'version_code=20800&language=zh-CN&device_platform=web&aid=497858&real_aid=497858&pkg_type=release_version&device_id=&pc_version=2.51.7&region=&sys_region=&samantha_web=1&use-olympus-account=1&web_tab_id=';
 
+// 参考: https://github.com/LauZzL/doubao-downloader
+const DOWNLOAD_INFO_URL = '/samantha/aispace/get_download_info?aid=497858&device_platform=web&samantha_web=1&use-olympus-account=1&version_code=20800&pkg_type=release_version';
+const NODE_INFO_URL = '/samantha/aispace/node_info?aid=497858&device_platform=web&samantha_web=1&use-olympus-account=1&version_code=20800&pkg_type=release_version';
+const HOMEPAGE_URL = '/samantha/aispace/homepage?aid=497858&device_platform=web&samantha_web=1&use-olympus-account=1&version_code=20800&pkg_type=release_version';
+
 /**
  * Extract video_id from a Doubao share URL.
  */
@@ -79,97 +84,71 @@ function readCookiesFile(filePath) {
 
 /**
  * 从响应 body 中提取视频 URL（尝试多种字段路径）
+ * 并应用无水印参数替换
  */
 function extractVideoUrlFromResponse(json) {
   if (!json || !json.data) return null;
 
   const data = json.data;
 
+  // 获取所有可能的视频 URL
+  let mainUrl = null;
+  let originalUrl = null;
+
   // 路径 1: original_media_info
-  if (data.original_media_info) {
-    const om = data.original_media_info;
-    if (om.main_url) {
-      const url = om.main_url.replace(/lr=[^&]+/g, 'lr=video_gen_no_watermark');
-      return {
-        title: '豆包视频',
-        author: '豆包AI',
-        duration: om.meta?.duration || data.media_info?.[0]?.meta?.duration || 0,
-        thumbnailUrl: data.poster_url || null,
-        platform: '豆包',
-        platformLabel: '豆包',
-        videoId: json.key || '',
-        webpageUrl: '',
-        directUrl: url,
-        hasOriginal: true,
-        width: om.meta?.width || om.width || 0,
-        height: om.meta?.height || om.height || 0,
-      };
-    }
+  if (data.original_media_info?.main_url) {
+    originalUrl = data.original_media_info.main_url;
   }
 
   // 路径 2: play_infos 数组
   const playInfos = data.play_infos || (data.play_info ? [data.play_info] : []);
-  if (playInfos.length > 0) {
-    const pi = playInfos[0];
-    if (pi && pi.main) {
-      return {
-        title: '豆包视频',
-        author: '豆包AI',
-        duration: pi.meta?.duration || 0,
-        thumbnailUrl: data.poster_url || null,
-        platform: '豆包',
-        platformLabel: '豆包',
-        videoId: json.key || '',
-        webpageUrl: '',
-        directUrl: pi.main.replace(/lr=[^&]+/g, 'lr=video_gen_no_watermark'),
-        hasOriginal: true,
-        width: pi.width || 0,
-        height: pi.height || 0,
-      };
-    }
+  if (playInfos.length > 0 && playInfos[0]?.main) {
+    originalUrl = playInfos[0].main;
   }
 
   // 路径 3: media_info 数组
   if (data.media_info && Array.isArray(data.media_info)) {
     for (const mi of data.media_info) {
-      if (mi && mi.main_url) {
-        return {
-          title: '豆包视频',
-          author: '豆包AI',
-          duration: mi.meta?.duration || 0,
-          thumbnailUrl: mi.poster_url || data.poster_url || null,
-          platform: '豆包',
-          platformLabel: '豆包',
-          videoId: json.key || '',
-          webpageUrl: '',
-          directUrl: mi.main_url.replace(/lr=[^&]+/g, 'lr=video_gen_no_watermark'),
-          hasOriginal: true,
-          width: mi.meta?.width || mi.width || 0,
-          height: mi.meta?.height || mi.height || 0,
-        };
+      if (mi?.main_url) {
+        originalUrl = mi.main_url;
+        break;
       }
     }
   }
 
   // 路径 4: video_info
-  if (data.video_info && data.video_info.main_url) {
-    return {
-      title: '豆包视频',
-      author: '豆包AI',
-      duration: data.video_info.duration || 0,
-      thumbnailUrl: data.poster_url || null,
-      platform: '豆包',
-      platformLabel: '豆包',
-      videoId: json.key || '',
-      webpageUrl: '',
-      directUrl: data.video_info.main_url.replace(/lr=[^&]+/g, 'lr=video_gen_no_watermark'),
-      hasOriginal: true,
-      width: data.video_info.width || 0,
-      height: data.video_info.height || 0,
-    };
+  if (data.video_info?.main_url) {
+    originalUrl = data.video_info.main_url;
   }
 
-  return null;
+  if (!originalUrl) return null;
+
+  // 应用无水印参数替换（参考 doubao-downloader-plus 项目）
+  // 尝试多种 lr 值
+  const cleanUrl = (url) => {
+    // 方法1: video_gen_no_watermark（标准）
+    let u = url.replace(/lr=[^&]+/g, 'lr=video_gen_no_watermark');
+    // 方法2: 也尝试 unwatermarked（某些 CDN 使用）
+    // 保留两种值，方便后续切换
+    return u;
+  };
+  mainUrl = cleanUrl(originalUrl);
+
+  // 一些 CDN 可能使用不同的参数名，保留原始 URL 作为备用
+  return {
+    title: data.title || '豆包视频',
+    author: '豆包AI',
+    duration: data.original_media_info?.meta?.duration || data.media_info?.[0]?.meta?.duration || data.play_infos?.[0]?.meta?.duration || 0,
+    thumbnailUrl: data.poster_url || null,
+    platform: '豆包',
+    platformLabel: '豆包',
+    videoId: json.key || '',
+    webpageUrl: '',
+    directUrl: mainUrl,
+    hasOriginal: true,
+    width: data.original_media_info?.meta?.width || data.media_info?.[0]?.meta?.width || 0,
+    height: data.original_media_info?.meta?.height || data.media_info?.[0]?.meta?.height || 0,
+  };
 }
 
 /**
@@ -262,7 +241,64 @@ async function getPlayInfo(videoId) {
     }
   }
 
+  // 最后尝试 get_download_info 接口（参考 doubao-downloader 扩展）
+  try {
+    const result = await tryGetDownloadInfo(videoId, cookies);
+    if (result) return result;
+  } catch (e) {
+    lastError = e;
+    console.warn(`[doubao] get_download_info 失败: ${e.message}`);
+  }
+
   throw lastError || new Error('所有API端点均失败');
+}
+
+/**
+ * 尝试 get_download_info 接口（参考 doubao-downloader 扩展）
+ * 通过用户的创作列表获取视频下载地址
+ */
+async function tryGetDownloadInfo(videoId, cookies) {
+  // 1. 获取用户主页，找到"我的创作"节点
+  const baseUrl = 'https://www.doubao.com';
+  const homepageData = await httpsRequest(baseUrl + HOMEPAGE_URL, '{}', { cookies, timeout: 10000 });
+  const creationNode = homepageData?.data?.children?.find(e => e.name === '我的创作');
+  if (!creationNode?.id) return null;
+
+  // 2. 获取创作列表，查找匹配的视频
+  const nodeData = await httpsRequest(baseUrl + NODE_INFO_URL, JSON.stringify({
+    node_id: creationNode.id,
+    need_full_path: true,
+    size: 50,
+    sort_param: { need_sort_config: true, sort_order: 1, sort_type: 0 },
+  }), { cookies, timeout: 10000 });
+
+  const videoNode = nodeData?.data?.children?.find(e => String(e.key) === String(videoId));
+  if (!videoNode?.id) return null;
+
+  // 3. 获取下载信息
+  const downloadData = await httpsRequest(baseUrl + DOWNLOAD_INFO_URL, JSON.stringify({
+    requests: [{ node_id: videoNode.id }],
+  }), { cookies, timeout: 10000 });
+
+  const mainUrl = downloadData?.data?.download_infos?.[0]?.main_url;
+  if (mainUrl) {
+    return {
+      title: '豆包视频',
+      author: '豆包AI',
+      duration: 0,
+      thumbnailUrl: null,
+      platform: '豆包',
+      platformLabel: '豆包',
+      videoId: videoId,
+      webpageUrl: '',
+      directUrl: mainUrl.replace(/lr=[^&]+/g, 'lr=video_gen_no_watermark'),
+      hasOriginal: true,
+      width: 0,
+      height: 0,
+    };
+  }
+
+  return null;
 }
 
 module.exports = { getPlayInfo, extractVideoId, isDoubaoUrl };

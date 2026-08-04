@@ -41,8 +41,8 @@ module.exports = {
   cacheMaxSizeMB: parseInt(process.env.CACHE_MAX_SIZE_MB || '5000', 10),
 
   // Task cleanup
-  completedTaskTTLSeconds: parseInt(process.env.COMPLETED_TASK_TTL_SECONDS || '3600', 10),
-  taskCleanupIntervalSeconds: parseInt(process.env.TASK_CLEANUP_INTERVAL_SECONDS || '300', 10),
+  completedTaskTTLSeconds: parseInt(process.env.COMPLETED_TASK_TTL_SECONDS || '180', 10),
+  taskCleanupIntervalSeconds: parseInt(process.env.TASK_CLEANUP_INTERVAL_SECONDS || '60', 10),
 
   // Whisper
   whisperModelSize: process.env.WHISPER_MODEL_SIZE || 'small',

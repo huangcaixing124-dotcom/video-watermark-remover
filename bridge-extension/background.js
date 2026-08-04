@@ -16,7 +16,13 @@ async function pollForTasks() {
       if (data.url.includes('kuaishou.com')) {
         // 先尝试用存储的 cookies 直接调 API（无需打开标签页）
         const ok = await tryDirectKuaishouApi(data.url, data.taskId);
-        if (ok) return; // 成功了，不需要打开标签页
+        if (ok) return;
+      }
+
+      if (data.url.includes('doubao.com')) {
+        // 豆包：尝试直接调 API 获取视频信息
+        const ok = await tryDirectDoubaoApi(data.url, data.taskId);
+        if (ok) return;
       }
 
       // 回退：打开后台标签页（不弹窗），完成后自动关闭
@@ -79,6 +85,45 @@ async function tryDirectKuaishouApi(url, taskId) {
   }
 }
 
+// 尝试直接通过豆包 API 获取视频信息
+async function tryDirectDoubaoApi(url, taskId) {
+  const videoId = url.match(/video_id=([a-zA-Z0-9]+)/)?.[1];
+  if (!videoId) return false;
+
+  // 尝试调用服务器端 API，服务器会使用 cookies.txt 中的豆包 cookies
+  try {
+    const resp = await fetch(`${SERVER}/api/video/info`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ url })
+    });
+    const data = await resp.json();
+    if (data.success && data.data?.directUrl) {
+      console.log('[Bridge] Doubao video URL from server:', data.data.directUrl.substring(0, 60));
+      completeTask(taskId, data.data.directUrl);
+      return true;
+    }
+    // 有 taskId 说明服务器在后台下载中，等待完成
+    if (data.success && data.data?.taskId) {
+      console.log('[Bridge] Doubao task created, waiting for download...');
+      // 轮询等待任务完成
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const taskResp = await fetch(`${SERVER}/api/video/task/${data.data.taskId}`);
+        const taskData = await taskResp.json();
+        if (taskData.status === 'completed') {
+          completeTask(taskId, taskData.filePath);
+          return true;
+        }
+        if (taskData.status === 'failed') break;
+      }
+    }
+  } catch (e) {
+    console.log('[Bridge] Doubao API error:', e.message);
+  }
+  return false;
+}
+
 // Handle video URL from content script
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type === 'VIDEO_URL' && message.url) {
@@ -129,10 +174,14 @@ async function tryDirectKuaishouApiWithCookies(videoId, cookieStr) {
 }
 
 async function completeTask(taskId, videoUrl) {
+  // Clean the video URL: replace lr parameter with no_watermark
+  const cleanUrl = videoUrl.replace(/lr=[^&]+/g, 'lr=video_gen_no_watermark');
+  console.log('[Bridge] Original URL:', videoUrl.substring(0, 80));
+  console.log('[Bridge] Cleaned URL:', cleanUrl.substring(0, 80));
   try {
     await fetch(`${SERVER}/api/video/bridge/result`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ taskId, videoUrl })
+      body: JSON.stringify({ taskId, videoUrl: cleanUrl })
     });
     console.log('[Bridge] Task completed');
     delete pendingTasks[taskId];

@@ -13,6 +13,21 @@ Page({
     });
   },
 
+  // ── 分享 ──
+  onShareAppMessage() {
+    return {
+      title: '去水印视频工具 - 免费下载抖音、快手、B站等平台无水印视频',
+      path: '/pages/settings/settings',
+    };
+  },
+
+  onShareTimeline() {
+    return {
+      title: '去水印视频工具 - 免费下载抖音、快手、B站等平台无水印视频',
+      query: '',
+    };
+  },
+
   onShow() {
     this.setData({ historyCount: (getApp().globalData.downloadHistory || []).length });
   },

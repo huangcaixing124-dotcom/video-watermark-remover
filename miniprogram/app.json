@@ -1,5 +1,6 @@
 {
   "pages": [
+    "pages/index/index",
     "pages/download/download",
     "pages/transcript/transcript",
     "pages/history/history",

@@ -20,10 +20,14 @@
     "http://localhost/*"
   ],
   "content_scripts": [{
-    "matches": ["https://*.kuaishou.com/*"],
+    "matches": ["https://*.kuaishou.com/*", "https://*.doubao.com/*"],
     "js": ["content.js"],
     "run_at": "document_end",
     "all_frames": true
+  }],
+  "web_accessible_resources": [{
+    "resources": ["main.js"],
+    "matches": ["https://*.kuaishou.com/*", "https://*.doubao.com/*"]
   }],
   "background": {
     "service_worker": "background.js"

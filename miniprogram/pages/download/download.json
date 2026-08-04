@@ -2,5 +2,7 @@
   "navigationBarTitleText": "",
   "navigationBarBackgroundColor": "#faf9f6",
   "backgroundColor": "#faf9f6",
+  "enableShareAppMessage": true,
+  "enableShareTimeline": true,
   "usingComponents": {}
 }

@@ -16,6 +16,23 @@ Page({
     this.detectClipboard();
   },
 
+  // ── 分享 ──
+  onShareAppMessage() {
+    const text = this.data.text;
+    return {
+      title: text ? `文案提取：${text.slice(0, 30)}${text.length > 30 ? '...' : ''}` : '文案提取 - 视频转文字工具',
+      path: '/pages/transcript/transcript',
+    };
+  },
+
+  onShareTimeline() {
+    const text = this.data.text;
+    return {
+      title: text ? `文案提取：${text.slice(0, 30)}${text.length > 30 ? '...' : ''}` : '文案提取 - 视频转文字工具',
+      query: '',
+    };
+  },
+
   onThemeChange(d) { this.setData({ isDark: d }); },
 
   detectClipboard() {

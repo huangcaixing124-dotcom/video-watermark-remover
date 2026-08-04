@@ -21,6 +21,23 @@ Page({
     this.detectClipboard();
   },
 
+  // ── 分享 ──
+  onShareAppMessage() {
+    const info = this.data.videoInfo;
+    return {
+      title: info ? `我在用去水印工具下载视频：${info.title || ''}` : '去水印视频工具 - 免费下载各大平台无水印视频',
+      path: '/pages/download/download',
+    };
+  },
+
+  onShareTimeline() {
+    const info = this.data.videoInfo;
+    return {
+      title: info ? `我在用去水印工具下载视频：${info.title || ''}` : '去水印视频工具 - 免费下载各大平台无水印视频',
+      query: '',
+    };
+  },
+
   onShow() {
     // 不再做任何自动重置操作
   },

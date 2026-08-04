@@ -52,7 +52,8 @@ app.get('/api/platforms', (_req, res) => {
 });
 
 // ── Serve static files from cache ──────────────────────────────
-app.use('/cache', express.static(config.cacheDir));
+// 移除 /cache 静态文件暴露 — 由 /api/video/file/:id 路由控制访问
+// app.use('/cache', express.static(config.cacheDir));
 
 // ── Error handler ───────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
@@ -64,6 +65,15 @@ app.use((err, _req, res, _next) => {
 if (!fs.existsSync(config.cacheDir)) {
   fs.mkdirSync(config.cacheDir, { recursive: true });
 }
+
+// ── Global error handlers ───────────────────────────────────────
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err);
+  // 记录日志后不退出进程，让 PM2 决定是否重启
+});
 
 // ── Graceful shutdown ──────────────────────────────────────────
 let isShuttingDown = false;

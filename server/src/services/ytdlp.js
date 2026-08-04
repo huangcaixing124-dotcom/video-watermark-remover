@@ -19,87 +19,23 @@ const http = require('http');
 const https = require('https');
 const config = require('../config');
 const { resolveDouyin, isDouyinUrl } = require('./douyinProxy');
+const { getRefererForUrl } = require('../utils/helpers');
 
-/** Resolve yt-dlp binary path. */
-function _ytdlpPath() {
-  // Check common locations
+/** Resolve yt-dlp binary path at runtime. */
+function _findYtdlp() {
   const candidates = [
-    'yt-dlp',  // in PATH
+    'yt-dlp',
     path.join(config.projectDir, '..', 'OpenMontage', '.venv', 'Scripts', 'yt-dlp'),
     path.join(config.projectDir, '..', '.venv', 'Scripts', 'yt-dlp'),
+    path.join(config.projectDir, '.venv', 'Scripts', 'yt-dlp'),
   ];
-  return candidates;
-}
-
-function _findYtdlp() {
-  // Will be resolved at runtime
-  return 'yt-dlp';
-}
-
-/**
- * Parse video info from a URL using yt-dlp --dump-json.
- * Returns structured video metadata.
- */
-function parseVideoInfo(url, options = {}) {
-  return new Promise((resolve, reject) => {
-    const args = [
-      '--dump-json',
-      '--no-download',
-      '--no-warnings',
-      '--no-playlist',
-      '--flat',
-    ];
-
-    // Auto-discover cookies.txt from project dir
-    const cookiesFile = options.cookiesFile || path.join(config.projectDir, 'cookies.txt');
-    if (fs.existsSync(cookiesFile)) {
-      args.push('--cookies', cookiesFile);
-    }
-
-    args.push(url);
-
-    execFile(_findYtdlp(), args, { timeout: 30000, maxBuffer: 2 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
-      if (err) {
-        const stderrStr = stderr?.toString() || '';
-        const msg = stderrStr.includes('Unsupported URL')
-          ? '不支持的视频链接，请检查链接是否正确'
-          : stderrStr.includes('HTTP Error')
-            ? '无法访问该视频，可能已被删除或设为私密'
-            : stderrStr.includes('Private video')
-              ? '该视频为私密视频，无法访问'
-              : `解析失败: ${err.message}`;
-        return reject(new Error(msg));
-      }
-
-      try {
-        const data = JSON.parse(stdout.toString());
-
-        // Map yt-dlp fields to standardized video info
-        const info = {
-          title: (data.title || 'Untitled').slice(0, 200),
-          author: data.uploader || data.channel || data.creator || 'Unknown',
-          duration: data.duration || 0,
-          thumbnailUrl: data.thumbnail || null,
-          platform: data.extractor_key?.toLowerCase() || 'unknown',
-          videoId: data.id || '',
-          webpageUrl: data.webpage_url || url,
-          width: data.width || 0,
-          height: data.height || 0,
-          // yt-dlp returns direct stream URLs when --flat is not used
-          // For quality selection, we store available formats
-          formats: data.formats || [],
-          // Best direct URL (non-watermarked for Douyin etc.)
-          directUrl: data.url || null,
-          // Platform display name
-          platformLabel: _platformLabel(data.extractor_key || ''),
-        };
-
-        resolve(info);
-      } catch (parseErr) {
-        reject(new Error(`解析响应失败: ${parseErr.message}`));
-      }
-    });
-  });
+  for (const c of candidates) {
+    try {
+      require('child_process').execFileSync(c, ['--version'], { stdio: 'ignore', windowsHide: true });
+      return c;
+    } catch {}
+  }
+  return 'yt-dlp'; // fallback — let it fail with meaningful error
 }
 
 /**
@@ -348,7 +284,7 @@ function _getVideoInfoWithYtdlp(url, options = {}) {
 async function downloadVideo(url, outputPath, options = {}) {
   // If a direct URL is provided AND it's not a Douyin/Xiaohongshu URL, use ffmpeg
   // Douyin prefers yt-dlp for non-watermarked; Xiaohongshu CDN blocks ffmpeg
-  const isXiaohongshu = url.includes('xiaohongshu.com') || url.includes('xhslink.com') || url.includes('xhslink.cn') || url.includes('xhslink.cn') || url.includes('xhscdn.com');
+  const isXiaohongshu = url.includes('xiaohongshu.com') || url.includes('xhslink.com') || url.includes('xhslink.cn') || url.includes('xhscdn.com');
   if (options.directUrl && !isDouyinUrl(url) && !isXiaohongshu) {
     console.log(`[ytdlp] Using direct URL download: ${options.directUrl.slice(0, 80)}...`);
     let filePath = outputPath;
@@ -406,21 +342,6 @@ async function downloadVideo(url, outputPath, options = {}) {
 
   // For non-Douyin URLs, try yt-dlp
   return _downloadWithYtdlp(url, finalPath, options);
-}
-
-/**
- * Get the correct Referer header for a given URL.
- */
-function getRefererForUrl(url) {
-  if (url.includes('bilibili.com')) return 'https://www.bilibili.com/';
-  if (url.includes('xiaohongshu.com') || url.includes('xhslink.com') || url.includes('xhslink.cn') || url.includes('xhslink.cn')) return 'https://www.xiaohongshu.com/';
-  if (url.includes('kuaishou.com') || url.includes('gifshow.com')) return 'https://www.kuaishou.com/';
-  if (url.includes('douyin.com') || url.includes('iesdouyin.com')) return 'https://www.douyin.com/';
-  if (url.includes('doubao.com')) return 'https://www.doubao.com/';
-  if (url.includes('youtube.com') || url.includes('youtu.be')) return 'https://www.youtube.com/';
-  if (url.includes('tiktok.com')) return 'https://www.tiktok.com/';
-  if (url.includes('weibo.com') || url.includes('weibo.cn')) return 'https://www.weibo.com/';
-  return 'https://www.douyin.com/'; // default fallback
 }
 
 /**
@@ -630,4 +551,4 @@ function _platformLabel(extractor) {
   return labels[extractor?.toUpperCase()] || extractor || '其他';
 }
 
-module.exports = { parseVideoInfo, getVideoInfo, downloadVideo, extractAudio, downloadFromUrl };
+module.exports = { getVideoInfo, downloadVideo, extractAudio, downloadFromUrl };

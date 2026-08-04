@@ -14,12 +14,13 @@ const http = require('http');
 const https = require('https');
 const router = express.Router();
 
-const { getVideoInfo, downloadVideo, downloadFromUrl } = require('../services/ytdlp');
+const { getVideoInfo, downloadVideo } = require('../services/ytdlp');
 const { getPlayInfo, extractVideoId, isDoubaoUrl } = require('../services/doubao');
 const { getVideoInfo: getKuaishouInfo } = require('../services/kuaishou');
 const { createTask, getTask, getTaskFile, startCleanup } = require('../services/downloader');
+const bridgeQueue = require('../services/bridgeQueue');
 const config = require('../config');
-const { generateId } = require('../utils/helpers');
+const { generateId, detectPlatform, formatDuration } = require('../utils/helpers');
 
 /** Health check. */
 router.get('/health', (req, res) => {
@@ -51,22 +52,16 @@ router.post('/info', async (req, res) => {
 
   // For platforms that may need the browser extension bridge,
   // try direct parsing first (yt-dlp / doubao API), then fall back to bridge
-  const isXiaohongshu = url.includes('xiaohongshu.com') || url.includes('xhslink.com') || url.includes('xhslink.cn');
-  const needsBridge = url.includes('douyin.com') || url.includes('kuaishou.com')
-    || isXiaohongshu || url.includes('doubao.com');
+  const { platform: platKey, label: platLabel, needsBridge } = detectPlatform(url);
 
   if (needsBridge) {
-    const platform = url.includes('doubao.com') ? '豆包'
-      : url.includes('xiaohongshu.com') || url.includes('xhslink.com') ? '小红书'
-      : url.includes('kuaishou.com') || url.includes('gifshow.com') ? '快手'
-      : '抖音';
     try {
       let info;
-      if (url.includes('doubao.com')) {
+      if (platKey === 'doubao') {
         const videoId = extractVideoId(url);
         if (!videoId) throw new Error('无法从链接中提取 video_id');
         info = await getPlayInfo(videoId);
-      } else if (url.includes('kuaishou.com') || url.includes('gifshow.com')) {
+      } else if (platKey === 'kuaishou') {
         // Skip Playwright (always fails for Kuaishou), go directly to bridge queue
         throw new Error('快手需要浏览器辅助解析');
       } else {
@@ -75,7 +70,7 @@ router.post('/info', async (req, res) => {
       // 解析成功，同时创建下载任务（后台开始下载）
       const task = createTask(url, {
         title: info.title,
-        platform: info.platformLabel || platform,
+        platform: info.platformLabel || platLabel,
         directUrl: info.directUrl || null,
       });
       return res.json({
@@ -86,7 +81,7 @@ router.post('/info', async (req, res) => {
           duration: info.duration,
           durationFormatted: formatDuration(info.duration),
           thumbnailUrl: info.thumbnailUrl,
-          platform: info.platformLabel || platform,
+          platform: info.platformLabel || platLabel,
           videoId: info.videoId,
           webpageUrl: info.webpageUrl,
           directUrl: info.directUrl,
@@ -95,10 +90,9 @@ router.post('/info', async (req, res) => {
         },
       });
     } catch (err) {
-      console.log(`[info] ${platform} direct parsing failed: ${err.message}, falling back to bridge`);
+      console.log(`[info] ${platLabel} direct parsing failed: ${err.message}, falling back to bridge`);
       // 创建桥接队列任务
-      const taskId = `bridge_${++taskIdCounter}_${Date.now()}`;
-      parseQueue.push({ taskId, url, status: 'pending', result: null, createdAt: Date.now() });
+      const taskId = bridgeQueue.addTask(url);
       console.log(`[bridge] Queued task during info: ${taskId} for ${url.slice(0, 60)}...`);
       return res.json({
         success: true,
@@ -108,7 +102,7 @@ router.post('/info', async (req, res) => {
           duration: 0,
           durationFormatted: '0:00',
           thumbnailUrl: null,
-          platform: platform,
+          platform: platLabel,
           videoId: '',
           webpageUrl: url,
           directUrl: null,
@@ -149,13 +143,6 @@ router.post('/info', async (req, res) => {
   }
 });
 
-/** Format duration in mm:ss. */
-function formatDuration(seconds) {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
-
 /** Create download task. */
 router.post('/download', async (req, res) => {
   const { url } = req.body;
@@ -164,23 +151,17 @@ router.post('/download', async (req, res) => {
   }
 
   // Bridge-requiring platforms - try direct parsing first
-  const isXiaohongshu = url.includes('xiaohongshu.com') || url.includes('xhslink.com') || url.includes('xhslink.cn');
-  const needsBridge = url.includes('douyin.com') || url.includes('kuaishou.com')
-    || isXiaohongshu || url.includes('doubao.com');
+  const { platform: platKey, label: platLabel, needsBridge } = detectPlatform(url);
 
   if (needsBridge) {
     try {
       let info;
-      const platformLabel = url.includes('doubao.com') ? '豆包'
-        : url.includes('xiaohongshu.com') || url.includes('xhslink.com') ? '小红书'
-        : url.includes('kuaishou.com') ? '快手'
-        : '抖音';
 
-      if (url.includes('doubao.com')) {
+      if (platKey === 'doubao') {
         const videoId = extractVideoId(url);
         if (!videoId) throw new Error('无法从链接中提取 video_id');
         info = await getPlayInfo(videoId);
-      } else if (url.includes('kuaishou.com') || url.includes('gifshow.com')) {
+      } else if (platKey === 'kuaishou') {
         info = await getKuaishouInfo(url);
       } else {
         info = await getVideoInfo(url);
@@ -188,17 +169,14 @@ router.post('/download', async (req, res) => {
 
       // If yt-dlp got metadata but no direct URL (common for Xiaohongshu),
       // fall back to bridge queue for actual download
-      if (!info.directUrl && (
-        url.includes('xiaohongshu.com') || url.includes('xhslink.com') ||
-        url.includes('kuaishou.com')
-      )) {
-        console.log(`[bridge] ${platformLabel} has no direct URL, falling back to bridge`);
+      if (!info.directUrl && (platKey === 'xiaohongshu' || platKey === 'kuaishou')) {
+        console.log(`[bridge] ${platLabel} has no direct URL, falling back to bridge`);
         throw new Error('无直接下载地址，需要浏览器辅助');
       }
 
       const task = createTask(url, {
         title: info.title,
-        platform: info.platformLabel || platformLabel,
+        platform: info.platformLabel || platLabel,
         directUrl: info.directUrl || null,
       });
       return res.json({
@@ -213,22 +191,14 @@ router.post('/download', async (req, res) => {
       });
     } catch (err) {
       // Fall back to bridge queue
-      const taskId = `bridge_${++taskIdCounter}_${Date.now()}`;
-      const platformLabel = url.includes('doubao.com') ? '豆包'
-        : url.includes('xiaohongshu.com') || url.includes('xhslink.com') ? '小红书'
-        : url.includes('kuaishou.com') ? '快手'
-        : '抖音';
-      parseQueue.push({
-        taskId, url, status: 'pending',
-        result: null, createdAt: Date.now()
-      });
-      console.log(`[bridge] Download queued for ${platformLabel}: ${url.slice(0, 60)}...`);
+      const taskId = bridgeQueue.addTask(url);
+      console.log(`[bridge] Download queued for ${platLabel}: ${url.slice(0, 60)}...`);
       return res.json({
         success: true,
         data: {
           id: taskId,
           title: '等待浏览器处理...',
-          platform: platformLabel,
+          platform: platLabel,
           status: 'downloading',
           progress: 0,
           bridgeTip: '正在通过浏览器解析，请稍候...',
@@ -268,12 +238,9 @@ router.get('/task/:id', (req, res) => {
 
   // Check bridge queue first
   if (taskId.startsWith('bridge_')) {
-    const bridgeTask = parseQueue.find(t => t.taskId === taskId);
+    const bridgeTask = bridgeQueue.getTask(taskId);
     if (bridgeTask) {
-      const platform = bridgeTask.url.includes('doubao.com') ? '豆包'
-        : bridgeTask.url.includes('xiaohongshu.com') || bridgeTask.url.includes('xhslink.com') ? '小红书'
-        : bridgeTask.url.includes('kuaishou.com') || bridgeTask.url.includes('gifshow.com') ? '快手'
-        : '抖音';
+      const { label: platLabel } = detectPlatform(bridgeTask.url);
 
       // Bridge task timeout: 5 minutes
       const BRIDGE_TASK_TIMEOUT = 300000;
@@ -287,7 +254,7 @@ router.get('/task/:id', (req, res) => {
         status: bridgeTask.status === 'completed' ? 'completed' : bridgeTask.status === 'failed' ? 'failed' : 'downloading',
         progress: bridgeTask.status === 'completed' ? 100 : bridgeTask.status === 'downloading' ? 50 : 0,
         title: bridgeTask.status === 'downloading' ? '正在下载到服务器...' : '等待浏览器处理...',
-        platform: platform,
+        platform: platLabel,
         filePath: bridgeTask.result || null,
         error: bridgeTask.error || null,
       });
@@ -308,7 +275,7 @@ router.get('/file/:id', async (req, res) => {
 
   // Check if it's a bridge task with a video URL
   if (taskId.startsWith('bridge_')) {
-    const bridgeTask = parseQueue.find(t => t.taskId === taskId);
+    const bridgeTask = bridgeQueue.getTask(taskId);
     if (bridgeTask && bridgeTask.result) {
       // 等待本地下载完成（最多等30秒），优先使用本地文件
       const serveLocalFile = async () => {
@@ -403,9 +370,6 @@ router.post('/external', (req, res) => {
  * Browser extension bridge - queue for video parsing requests.
  * Mini program submits URLs here, extension polls for new tasks.
  */
-const parseQueue = [];
-let taskIdCounter = 0;
-
 /** Submit a URL for the browser extension to parse */
 router.post('/bridge/parse', (req, res) => {
   const { url } = req.body;
@@ -413,39 +377,17 @@ router.post('/bridge/parse', (req, res) => {
     return res.status(400).json({ error: '请提供视频链接' });
   }
 
-  const taskId = `bridge_${++taskIdCounter}_${Date.now()}`;
-  parseQueue.push({ taskId, url, status: 'pending', result: null, createdAt: Date.now() });
-
+  const taskId = bridgeQueue.addTask(url);
   console.log(`[bridge] Queued parse task: ${taskId} for ${url.slice(0, 60)}...`);
   res.json({ success: true, taskId });
 });
 
 /** Extension polls for pending tasks */
 router.get('/bridge/tasks', (req, res) => {
-  // Clean up stale tasks older than 5 minutes
-  const now = Date.now();
-  for (let i = parseQueue.length - 1; i >= 0; i--) {
-    if (now - parseQueue[i].createdAt > 300000) {
-      // Clean up local file if it exists
-      const t = parseQueue[i];
-      if (t.localFilePath) {
-        try {
-          const dir = path.dirname(t.localFilePath);
-          if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
-        } catch {}
-      }
-      parseQueue.splice(i, 1);
-    }
-  }
-
-  // Return the most recent pending task and mark it as processing
-  const pending = parseQueue.filter(t => t.status === 'pending');
-  if (pending.length > 0) {
-    // Sort by creation time (newest first)
-    pending.sort((a, b) => b.createdAt - a.createdAt);
-    const task = pending[0];
-    task.status = 'processing';
-    return res.json({ hasTask: true, taskId: task.taskId, url: task.url });
+  bridgeQueue.cleanup();
+  const pending = bridgeQueue.getNextPendingTask();
+  if (pending) {
+    return res.json({ hasTask: true, taskId: pending.taskId, url: pending.url });
   }
   res.json({ hasTask: false });
 });
@@ -453,64 +395,16 @@ router.get('/bridge/tasks', (req, res) => {
 /** Extension reports result back */
 router.post('/bridge/result', (req, res) => {
   const { taskId, videoUrl, error } = req.body;
-  const task = parseQueue.find(t => t.taskId === taskId);
+  const task = bridgeQueue.reportResult(taskId, videoUrl, error);
   if (task) {
-    task.result = videoUrl || null;
-    task.error = error || null;
-    task.completedAt = Date.now();
     console.log(`[bridge] Task ${taskId} got video URL: ${videoUrl ? 'OK' : 'FAILED'}`);
-
-    if (videoUrl) {
-      // 设置为下载中，本地下载完成后才改为 completed
-      task.status = 'downloading';
-      task._downloadPromise = downloadBridgeVideoToLocal(taskId, videoUrl);
-      task._downloadPromise.then(() => {
-        const t = parseQueue.find(x => x.taskId === taskId);
-        if (t) t.status = 'completed';
-      }).catch(err => {
-        console.error(`[bridge] Local download failed for ${taskId}: ${err.message}`);
-        const t = parseQueue.find(x => x.taskId === taskId);
-        if (t) t.status = 'completed'; // 即使失败也标记完成，可走代理回退
-      });
-    } else {
-      task.status = 'failed';
-    }
   }
   res.json({ success: true });
 });
 
-/**
- * Download bridge-reported video URL to local server disk.
- * Runs in background; task remains usable via proxy if this fails.
- */
-async function downloadBridgeVideoToLocal(taskId, videoUrl) {
-  const task = parseQueue.find(t => t.taskId === taskId);
-  if (!task) return;
-
-  const bridgeDir = path.join(config.cacheDir, 'bridge', taskId);
-  fs.mkdirSync(bridgeDir, { recursive: true });
-  const outputPath = path.join(bridgeDir, 'output.mp4');
-
-  try {
-    const result = await downloadFromUrl(videoUrl, outputPath, {
-      sourceUrl: task.url,
-      timeout: 120000,
-    });
-    // Only update if task still exists
-    const currentTask = parseQueue.find(t => t.taskId === taskId);
-    if (currentTask) {
-      currentTask.localFilePath = result.filePath;
-      console.log(`[bridge] Local file saved for ${taskId}: ${result.filePath}`);
-    }
-  } catch (err) {
-    // Non-critical - task remains usable via proxy streaming
-    console.error(`[bridge] Local download failed for ${taskId}: ${err.message}`);
-  }
-}
-
 /** Mini program checks task status */
 router.get('/bridge/status/:taskId', (req, res) => {
-  const task = parseQueue.find(t => t.taskId === req.params.taskId);
+  const task = bridgeQueue.getTask(req.params.taskId);
   if (!task) {
     return res.status(404).json({ error: '任务不存在' });
   }

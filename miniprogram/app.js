@@ -70,7 +70,8 @@ App({
     const i = h.findIndex(x => x.url === item.url);
     if (i >= 0) { h[i] = { ...h[i], ...item, downloadedAt: Date.now() }; }
     else { h.unshift({ ...item, downloadedAt: Date.now() }); }
-    if (h.length > 100) h.length = 100;
+    // 最多保留5条，超出删除最旧的
+    if (h.length > 5) h.length = 5;
     this.globalData.downloadHistory = h;
     wx.setStorageSync('download_history', JSON.stringify(h));
   },

@@ -6,7 +6,7 @@
  * - Generate SRT subtitles
  *
  * Workflow:
- * 1. Download video via yt-dlp
+ * 1. Download video via yt-dlp (or bridge for Kuaishou)
  * 2. Extract audio via ffmpeg
  * 3. Run Whisper on audio file
  * 4. Return transcription text + SRT
@@ -14,7 +14,8 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { generateId, sleep, formatDuration } = require('../utils/helpers');
+const { generateId, sleep, formatDuration, getRefererForUrl } = require('../utils/helpers');
+const bridgeQueue = require('./bridgeQueue');
 const config = require('../config');
 
 /** Transcript task store. */
@@ -27,90 +28,6 @@ fs.mkdirSync(MODEL_CACHE, { recursive: true });
 /** Transcription output dir. */
 const TRANSCRIPT_DIR = path.join(config.cacheDir, 'transcripts');
 fs.mkdirSync(TRANSCRIPT_DIR, { recursive: true });
-
-/**
- * Python script for Whisper transcription.
- * Uses faster-whisper library to transcribe audio to SRT.
- */
-const WHISPER_SCRIPT = `
-import sys
-import os
-from pathlib import Path
-from faster_whisper import WhisperModel
-
-audio_path = sys.argv[1]
-output_dir = sys.argv[2]
-model_size = sys.argv[3]
-language = sys.argv[4]
-device = sys.argv[5]
-compute_type = sys.argv[6]
-
-# On Windows, use direct model path to avoid symlink issues with HF cache
-# Try to find the cached model snapshot first
-hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
-model_dir = hf_cache / f"models--Systran--faster-whisper-{model_size}"
-if model_dir.exists():
-    snapshots = list((model_dir / "snapshots").iterdir()) if (model_dir / "snapshots").exists() else []
-    if snapshots:
-        model_path = str(snapshots[0])
-        print(f"Using cached model at {model_path}")
-    else:
-        model_path = model_size
-        print(f"Using model: {model_size}")
-else:
-    model_path = model_size
-    print(f"Using model: {model_size}")
-
-print(f"Loading model...")
-model = WhisperModel(
-    model_path,
-    device=device,
-    compute_type=compute_type,
-    cache_dir=Path(output_dir).parent
-)
-
-print("Transcribing...")
-segments, info = model.transcribe(
-    audio_path,
-    language=language,
-    beam_size=5,
-    vad_filter=True,
-    vad_parameters={
-        "threshold": 0.3,
-        "min_silence_duration_ms": 500,
-    },
-)
-
-# Generate SRT
-srt_path = Path(output_dir) / "output.srt"
-srt_lines = []
-i = 1
-for seg in segments:
-    start = seg.start
-    end = seg.end
-    text = seg.text.strip()
-    if not text:
-        continue
-    def fmt_ts(t):
-        h = int(t // 3600)
-        m = int((t % 3600) // 60)
-        s = int(t % 60)
-        ms = int((t % 1) * 1000)
-        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-    srt_lines.append(f"{i}")
-    srt_lines.append(f"{fmt_ts(start)} --> {fmt_ts(end)}")
-    srt_lines.append(text)
-    srt_lines.append("")
-    i += 1
-
-srt_path.write_text("\\n".join(srt_lines), encoding="utf-8")
-
-# Generate plain text
-text_path = Path(output_dir) / "output.txt"
-text_path.write_text("\\n".join(s for s in srt_lines if not s.endswith("-->") and s.strip() and not s.isdigit()), encoding="utf-8")
-
-print(f"Transcription complete. Language: {info.language} ({info.language_probability:.1%})")
-`;
 
 /**
  * Create a transcription task.
@@ -157,39 +74,63 @@ function createTask(url, options = {}) {
  */
 async function runTranscription(task) {
   try {
-    // Step 1: Download video
+    // Step 1: Download video (or get audio directly for Kuaishou)
     task.status = 'downloading';
     task.progress = 5;
-    await sleep(200);
 
     const videoDir = task._outputDir;
-    const outputPath = path.join(videoDir, 'video.%(ext)s');
+    let videoPath = null;
+    let audioPath = path.join(videoDir, 'audio.wav');
 
-    await downloadVideoWithYTDL(task.url, videoDir);
+    if (task.url.includes('kuaishou.com') || task.url.includes('gifshow.com')) {
+      // Kuaishou: use bridge extension to get video CDN URL, then use ffmpeg for audio
+      task.progress = 10;
+      console.log(`[transcriber] Kuaishou URL detected, adding to bridge queue: ${task.url.slice(0, 60)}...`);
+      const bridgeTaskId = bridgeQueue.addTask(task.url);
 
-    // Find downloaded video
-    const files = fs.readdirSync(videoDir);
-    const videoFile = files.find(f => f.endsWith('.mp4') || f.endsWith('.webm') || f.endsWith('.mkv'));
-    if (!videoFile) {
-      task.status = 'failed';
-      task.error = '下载视频失败';
-      return;
+      // Wait for bridge to process (with timeout)
+      task.progress = 15;
+      let bridgeResult;
+      try {
+        bridgeResult = await bridgeQueue.waitForTask(bridgeTaskId, 180000);
+      } catch (bridgeErr) {
+        // If bridge fails, try local file from bridge download
+        console.log(`[transcriber] Bridge wait failed: ${bridgeErr.message}`);
+        throw new Error(`桥接获取视频失败: ${bridgeErr.message}`);
+      }
+
+      task.progress = 30;
+      const videoUrl = bridgeResult.videoUrl;
+      console.log(`[transcriber] Got Kuaishou video URL, length: ${videoUrl ? videoUrl.length : 0}`);
+
+      // Use ffmpeg to download audio directly from the CDN URL (no full video download)
+      task.progress = 35;
+      await downloadAudioFromUrl(videoUrl, audioPath, task.url);
+    } else {
+      // Standard flow: download full video via yt-dlp
+      await downloadVideoWithYTDL(task.url, videoDir);
+
+      // Find downloaded video
+      const files = fs.readdirSync(videoDir);
+      const videoFile = files.find(f => f.endsWith('.mp4') || f.endsWith('.webm') || f.endsWith('.mkv'));
+      if (!videoFile) {
+        task.status = 'failed';
+        task.error = '下载视频失败';
+        return;
+      }
+      videoPath = path.join(videoDir, videoFile);
+
+      // Step 2: Extract audio from video
+      task.status = 'extracting';
+      task.progress = 20;
+
+      task._audioPath = audioPath;
+      await extractAudio(videoPath, audioPath);
     }
-    const videoPath = path.join(videoDir, videoFile);
-
-    // Step 2: Extract audio
-    task.status = 'extracting';
-    task.progress = 20;
-    await sleep(200);
-
-    const audioPath = path.join(videoDir, 'audio.wav');
-    task._audioPath = audioPath;
-    await extractAudio(videoPath, audioPath);
 
     // Step 3: Transcribe
     task.status = 'transcribing';
     task.progress = 40;
-    await sleep(200);
 
     const text = await runWhisper(audioPath, task._outputDir, config.whisperModelSize, 'zh', config.whisperDevice, config.whisperComputeType);
 
@@ -207,7 +148,7 @@ async function runTranscription(task) {
     task.progress = 100;
 
     // Cleanup video file (keep audio + transcript)
-    try { fs.unlinkSync(videoPath); } catch {}
+    try { if (videoPath) fs.unlinkSync(videoPath); } catch {}
   } catch (err) {
     task.status = 'failed';
     task.error = err.message.slice(0, 500);
@@ -281,6 +222,45 @@ function extractAudio(videoPath, audioPath) {
       else reject(new Error(stderr.slice(0, 300)));
     });
 
+    proc.on('error', reject);
+  });
+}
+
+/**
+ * Download audio directly from a video URL using ffmpeg.
+ * Used for Kuaishou videos where we have the CDN URL but no local file.
+ * Skips full video download — extracts audio directly.
+ */
+function downloadAudioFromUrl(videoUrl, audioPath, sourceUrl) {
+  return new Promise((resolve, reject) => {
+    const referer = getRefererForUrl(sourceUrl || videoUrl);
+    const args = [
+      '-y',
+      '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      '-headers', `Referer: ${referer}\r\n`,
+      '-i', videoUrl,
+      '-vn',
+      '-acodec', 'pcm_s16le',
+      '-ar', '16000',
+      '-ac', '1',
+      audioPath,
+    ];
+    const proc = spawn('ffmpeg', args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 300000,
+      windowsHide: true,
+    });
+    let stderr = '';
+    proc.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    proc.on('close', code => {
+      if (code === 0) {
+        resolve(audioPath);
+      } else {
+        const lines = stderr.split('\n').filter(l => l.includes('Error') || l.includes('error') || l.includes('Invalid') || l.includes('403') || l.includes('404'));
+        const errMsg = lines.length > 0 ? lines.join('; ').slice(0, 200) : stderr.slice(-200);
+        reject(new Error(errMsg || `ffmpeg audio download failed with code ${code}`));
+      }
+    });
     proc.on('error', reject);
   });
 }
