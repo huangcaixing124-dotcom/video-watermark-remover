@@ -22,6 +22,12 @@ const bridgeQueue = require('../services/bridgeQueue');
 const config = require('../config');
 const { generateId, detectPlatform, formatDuration } = require('../utils/helpers');
 
+/** Ensure a URL uses HTTPS (replace HTTP). */
+function ensureHttps(url) {
+  if (!url || typeof url !== 'string') return url;
+  return url.replace(/^http:\/\//i, 'https://');
+}
+
 /** Health check. */
 router.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -80,7 +86,7 @@ router.post('/info', async (req, res) => {
           author: info.author,
           duration: info.duration,
           durationFormatted: formatDuration(info.duration),
-          thumbnailUrl: info.thumbnailUrl,
+          thumbnailUrl: ensureHttps(info.thumbnailUrl),
           platform: info.platformLabel || platLabel,
           videoId: info.videoId,
           webpageUrl: info.webpageUrl,
@@ -129,7 +135,7 @@ router.post('/info', async (req, res) => {
         author: info.author,
         duration: info.duration,
         durationFormatted: formatDuration(info.duration),
-        thumbnailUrl: info.thumbnailUrl,
+        thumbnailUrl: ensureHttps(info.thumbnailUrl),
         platform: info.platformLabel,
         videoId: info.videoId,
         webpageUrl: info.webpageUrl,
