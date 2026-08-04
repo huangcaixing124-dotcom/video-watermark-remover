@@ -5,7 +5,7 @@
       <view class="status-dot {{connected ? 'online' : 'offline'}}"></view>
       <text>{{connected ? '服务已连接' : '服务未连接'}}</text>
     </view>
-    <text class="hero-title">去水印视频</text>
+    <text class="hero-title">视频解析</text>
     <text class="hero-subtitle">粘贴链接  ·  一键下载  ·  高清</text>
   </view>
 

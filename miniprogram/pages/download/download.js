@@ -26,7 +26,7 @@ Page({
   onShareAppMessage() {
     const info = this.data.videoInfo;
     return {
-      title: info ? `我在用去水印工具下载视频：${info.title || ''}` : '去水印视频工具 - 免费下载各大平台高清视频',
+      title: info ? `我在用视频工具下载视频：${info.title || ''}` : '视频解析工具 - 免费下载各大平台高清视频',
       path: '/pages/download/download',
     };
   },
@@ -34,7 +34,7 @@ Page({
   onShareTimeline() {
     const info = this.data.videoInfo;
     return {
-      title: info ? `我在用去水印工具下载视频：${info.title || ''}` : '去水印视频工具 - 免费下载各大平台高清视频',
+      title: info ? `我在用视频工具下载视频：${info.title || ''}` : '视频解析工具 - 免费下载各大平台高清视频',
       query: '',
     };
   },
@@ -57,7 +57,7 @@ Page({
     });
   },
 
-  // 粘贴并去水印（一键操作）
+  // 粘贴并解析（一键操作）
   pasteAndDownload() {
     if (this._busy) return;
     this._busy = true;

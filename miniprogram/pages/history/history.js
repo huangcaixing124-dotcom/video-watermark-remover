@@ -11,14 +11,14 @@ Page({
   // ── 分享 ──
   onShareAppMessage() {
     return {
-      title: '下载历史 - 我使用去水印视频工具下载的视频',
+      title: '下载历史 - 我使用视频解析工具下载的视频',
       path: '/pages/history/history',
     };
   },
 
   onShareTimeline() {
     return {
-      title: '下载历史 - 我使用去水印视频工具下载的视频',
+      title: '下载历史 - 我使用视频解析工具下载的视频',
       query: '',
     };
   },
