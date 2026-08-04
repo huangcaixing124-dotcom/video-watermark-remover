@@ -81,6 +81,11 @@ function gracefulShutdown(signal) {
   if (isShuttingDown) return;
   isShuttingDown = true;
   console.log(`\n[${signal}] 正在关闭服务器...`);
+  // 关闭 Playwright 浏览器
+  try {
+    const { closeBrowser } = require('./services/playwrightService');
+    closeBrowser().catch(() => {});
+  } catch {}
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000);
 }

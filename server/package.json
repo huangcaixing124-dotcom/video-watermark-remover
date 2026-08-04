@@ -9,9 +9,11 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
-    "express": "^4.21.0",
     "cors": "^2.8.5",
+    "express": "^4.21.0",
     "morgan": "^1.10.0",
+    "playwright": "^1.62.1",
+    "playwright-core": "^1.62.1",
     "uuid": "^10.0.0"
   }
 }

@@ -18,6 +18,7 @@ const { getVideoInfo, downloadVideo } = require('../services/ytdlp');
 const { getPlayInfo, extractVideoId, isDoubaoUrl } = require('../services/doubao');
 const { getVideoInfo: getKuaishouInfo } = require('../services/kuaishou');
 const { createTask, getTask, getTaskFile, startCleanup } = require('../services/downloader');
+const { extractVideo: playwrightExtract } = require('../services/playwrightService');
 const bridgeQueue = require('../services/bridgeQueue');
 const config = require('../config');
 const { generateId, detectPlatform, formatDuration } = require('../utils/helpers');
@@ -96,8 +97,40 @@ router.post('/info', async (req, res) => {
         },
       });
     } catch (err) {
-      console.log(`[info] ${platLabel} direct parsing failed: ${err.message}, falling back to bridge`);
-      // 创建桥接队列任务
+      console.log(`[info] ${platLabel} direct parsing failed: ${err.message}, trying Playwright...`);
+      // 尝试 Playwright 无头浏览器提取
+      try {
+        const pwResult = await playwrightExtract(url, { timeout: 30000 });
+        if (pwResult && pwResult.videoUrl) {
+          console.log(`[info] Playwright extracted video URL for ${platLabel}`);
+          const task = createTask(url, {
+            title: pwResult.title || platLabel + '视频',
+            platform: platLabel,
+            directUrl: pwResult.videoUrl,
+          });
+          return res.json({
+            success: true,
+            data: {
+              title: pwResult.title || platLabel + '视频',
+              author: '',
+              duration: 0,
+              durationFormatted: '0:00',
+              thumbnailUrl: null,
+              platform: platLabel,
+              videoId: '',
+              webpageUrl: url,
+              directUrl: pwResult.videoUrl,
+              hasOriginal: true,
+              taskId: task.id,
+            },
+          });
+        }
+      } catch (pwErr) {
+        console.log(`[info] Playwright also failed: ${pwErr.message}`);
+      }
+
+      // 最后回退到桥接扩展
+      console.log(`[info] Falling back to bridge extension for ${platLabel}`);
       const taskId = bridgeQueue.addTask(url);
       console.log(`[bridge] Queued task during info: ${taskId} for ${url.slice(0, 60)}...`);
       return res.json({
@@ -196,6 +229,31 @@ router.post('/download', async (req, res) => {
         },
       });
     } catch (err) {
+      // 尝试 Playwright 无头浏览器
+      try {
+        const pwResult = await playwrightExtract(url, { timeout: 25000 });
+        if (pwResult && pwResult.videoUrl) {
+          console.log(`[playwright] Download extracted for ${platLabel}`);
+          const task = createTask(url, {
+            title: pwResult.title || platLabel + '视频',
+            platform: platLabel,
+            directUrl: pwResult.videoUrl,
+          });
+          return res.json({
+            success: true,
+            data: {
+              id: task.id,
+              title: task.title,
+              platform: task.platform,
+              status: task.status,
+              progress: task.progress,
+            },
+          });
+        }
+      } catch (pwErr) {
+        console.log(`[playwright] Download fallback failed: ${pwErr.message}`);
+      }
+
       // Fall back to bridge queue
       const taskId = bridgeQueue.addTask(url);
       console.log(`[bridge] Download queued for ${platLabel}: ${url.slice(0, 60)}...`);
