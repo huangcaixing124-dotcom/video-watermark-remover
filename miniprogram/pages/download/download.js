@@ -1,5 +1,6 @@
 // pages/download/download.js
 const { extractUrl, detectPlatform, post, pollTask } = require('../../utils/api');
+const { checkText } = require('../../utils/security');
 
 Page({
   data: {
@@ -61,9 +62,16 @@ Page({
     if (this._busy) return;
     this._busy = true;
     wx.getClipboardData({
-      success: (res) => {
+      success: async (res) => {
         const url = extractUrl(res.data || '');
         if (url) {
+          // 内容安全检测
+          const sec = await checkText(url);
+          if (!sec.safe) {
+            wx.showToast({ title: '内容违规，已拦截', icon: 'error' });
+            this._busy = false;
+            return;
+          }
           this.setData({ url });
           this.parseVideo();
         } else {
@@ -82,6 +90,13 @@ Page({
   async parseVideo() {
     const url = extractUrl(this.data.url);
     if (!url) { this._busy = false; return wx.showToast({ title: '未找到有效链接', icon: 'none' }); }
+    // 内容安全检测
+    const sec = await checkText(url);
+    if (!sec.safe) {
+      wx.showToast({ title: '内容违规，已拦截', icon: 'error' });
+      this._busy = false;
+      return;
+    }
     // 防止重复进入
     if (this.data.downloading) { this._busy = false; return; }
     this._precacheDone = false;

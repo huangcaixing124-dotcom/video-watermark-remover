@@ -1,5 +1,6 @@
 // pages/transcript/transcript.js
 const { extractUrl, post, pollTask } = require('../../utils/api');
+const { checkText } = require('../../utils/security');
 
 Page({
   data: {
@@ -52,9 +53,16 @@ Page({
 
   pasteFromClipboard() {
     wx.getClipboardData({
-      success: (res) => {
+      success: async (res) => {
         const url = extractUrl(res.data || '');
-        if (url) { this.setData({ url }); this.startTranscript(); }
+        if (url) {
+          const sec = await checkText(url);
+          if (!sec.safe) {
+            wx.showToast({ title: '内容违规，已拦截', icon: 'error' });
+            return;
+          }
+          this.setData({ url }); this.startTranscript();
+        }
         else wx.showToast({ title: '未找到视频链接', icon: 'none' });
       },
     });
@@ -66,6 +74,12 @@ Page({
   async startTranscript() {
     const url = extractUrl(this.data.url);
     if (!url) return wx.showToast({ title: '未找到有效链接', icon: 'none' });
+    // 内容安全检测
+    const sec = await checkText(url);
+    if (!sec.safe) {
+      wx.showToast({ title: '内容违规，已拦截', icon: 'error' });
+      return;
+    }
     this.setData({ loading: true, error: '', text: null, progress: 0 });
     try {
       const res = await post('/api/transcript/start', { url, language: 'zh' });
