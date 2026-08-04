@@ -1,0 +1,56 @@
+<view class="page {{isDark ? 'dark' : ''}}">
+  <view class="header">
+    <text class="title">隐私政策</text>
+    <text class="subtitle">最后更新：2026年8月</text>
+  </view>
+
+  <view class="section">
+    <text class="section-title">1. 信息收集与使用</text>
+    <text class="section-body">
+      本工具仅收集您主动提供的视频链接用于解析和下载服务。我们不会收集您的个人信息、通讯录、位置信息等敏感数据。
+
+      我们使用以下微信 API，均需您主动授权：
+      - 剪贴板读取：用于快速粘贴视频链接
+      - 相册写入：用于保存下载的视频到相册
+    </text>
+  </view>
+
+  <view class="section">
+    <text class="section-title">2. 数据存储与安全</text>
+    <text class="section-body">
+      您的下载历史记录仅保存在设备本地存储中，不会上传到服务器。我们采取合理的安全措施保护您的数据，但请注意没有任何网络传输或电子存储方法是完全安全的。
+    </text>
+  </view>
+
+  <view class="section">
+    <text class="section-title">3. 内容安全</text>
+    <text class="section-body">
+      为了遵守相关法律法规，我们会对您提交的链接进行内容安全检测。违规内容将被拦截并无法处理。
+    </text>
+  </view>
+
+  <view class="section">
+    <text class="section-title">4. 第三方服务</text>
+    <text class="section-body">
+      本工具需要连接服务器进行视频解析和下载。服务器地址可在设置页面自行配置。我们不会将您的数据共享给任何第三方。
+    </text>
+  </view>
+
+  <view class="section">
+    <text class="section-title">5. 用户责任</text>
+    <text class="section-body">
+      您应确保下载的视频内容不侵犯他人知识产权或合法权益。本工具仅提供技术辅助功能，不对用户下载的内容及其用途负责。
+    </text>
+  </view>
+
+  <view class="section">
+    <text class="section-title">6. 政策更新</text>
+    <text class="section-body">
+      我们可能会不时更新本隐私政策。更新后的政策将在小程序内公布，继续使用即表示您同意更新后的条款。
+    </text>
+  </view>
+
+  <view class="footer">
+    <button class="btn btn-primary" bindtap="goBack">返回</button>
+  </view>
+</view>

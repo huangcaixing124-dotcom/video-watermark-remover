@@ -6,7 +6,7 @@
       <text>{{connected ? '服务已连接' : '服务未连接'}}</text>
     </view>
     <text class="hero-title">去水印视频</text>
-    <text class="hero-subtitle">粘贴链接  ·  一键下载  ·  无水印</text>
+    <text class="hero-subtitle">粘贴链接  ·  一键下载  ·  高清</text>
   </view>
 
   <view class="clipboard-card card" wx:if="{{hasClipboard}}" bindtap="goDownloadWithUrl">
@@ -24,7 +24,7 @@
   <view class="feature-grid">
     <view class="feature-card" bindtap="goDownload">
       <view class="feature-icon" style="background:linear-gradient(135deg,#ede9fe,#e0e7ff)">⬇️</view>
-      <text class="feature-title">无水印下载</text>
+      <text class="feature-title">高清下载</text>
       <text class="feature-desc">抖音/快手/B站/小红书/豆包</text>
       <text class="feature-action">开始下载 →</text>
     </view>
@@ -67,7 +67,7 @@
       <view class="step-connector"></view>
       <view class="step"><view class="step-num">2</view><text class="step-text">打开本小程序，链接自动识别</text></view>
       <view class="step-connector"></view>
-      <view class="step"><view class="step-num">3</view><text class="step-text">一键下载无水印视频到相册</text></view>
+      <view class="step"><view class="step-num">3</view><text class="step-text">一键下载高清视频到相册</text></view>
     </view>
   </view>
 

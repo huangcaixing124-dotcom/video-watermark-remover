@@ -74,7 +74,7 @@
 
   <!-- 引导到下载页 -->
   <view class="guide-card" bindtap="goDownload">
-    <text class="guide-text">⬇️ 需要下载无水印视频？去下载页</text>
+    <text class="guide-text">⬇️ 需要下载视频？去下载页</text>
     <text class="guide-arrow">→</text>
   </view>
 

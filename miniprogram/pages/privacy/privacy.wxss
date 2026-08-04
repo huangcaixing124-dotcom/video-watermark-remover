@@ -1,0 +1,12 @@
+.page { padding: 20px; min-height: 100vh; background: #faf9f6; color: #333; }
+.page.dark { background: #0f0f0f; color: #e0e0e0; }
+.header { text-align: center; margin-bottom: 24px; }
+.title { font-size: 20px; font-weight: 600; }
+.subtitle { font-size: 12px; color: #999; margin-top: 4px; display: block; }
+.section { margin-bottom: 20px; }
+.section-title { font-size: 15px; font-weight: 600; display: block; margin-bottom: 6px; }
+.section-body { font-size: 13px; color: #666; line-height: 1.8; display: block; }
+.dark .section-body { color: #aaa; }
+.footer { margin-top: 32px; text-align: center; }
+.btn { padding: 10px 32px; border: none; border-radius: 8px; font-size: 14px; }
+.btn-primary { background: #667eea; color: white; }
