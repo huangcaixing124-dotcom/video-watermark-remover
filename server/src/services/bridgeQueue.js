@@ -164,13 +164,16 @@ function runWatermarkRemoval(inputPath, outputPath) {
       timeout: 300000,
       maxBuffer: 100 * 1024 * 1024,
       windowsHide: true,
+      encoding: 'buffer',
     }, (err, stdout, stderr) => {
       if (err) {
+        const errStr = Buffer.isBuffer(stderr) ? stderr.toString('utf8').slice(0, 300) : String(stderr).slice(0, 300);
         console.error(`[watermark] Error: ${err.message}`);
-        console.error(`[watermark] stderr: ${(stderr || '').slice(0, 300)}`);
+        console.error(`[watermark] stderr: ${errStr}`);
         return reject(err);
       }
-      console.log(`[watermark] Success: ${(stdout || '').slice(0, 200)}`);
+      const outStr = Buffer.isBuffer(stdout) ? stdout.toString('utf8').slice(0, 200) : String(stdout).slice(0, 200);
+      console.log(`[watermark] Success: ${outStr}`);
       resolve();
     });
   });

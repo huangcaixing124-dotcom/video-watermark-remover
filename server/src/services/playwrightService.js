@@ -139,41 +139,50 @@ async function extractKuaishou(page, url, timeout) {
   let videoTitle = '快手视频';
   let responseCount = 0;
 
+  // 从页面 URL 中提取视频 ID（用于验证找到的 URL 是否匹配当前页面）
+  const pageVideoId = url.match(/\/([a-zA-Z0-9]+)$/)?.[1] || '';
+
   // 被动监听所有响应，不拦截请求
   page.on('response', async (response) => {
+    if (videoUrl) return; // 已找到，不再处理
     try {
       const ct = response.headers()['content-type'] || '';
       if (!ct.includes('json') && !ct.includes('text')) return;
       responseCount++;
       const body = await response.text();
-      if (!body || body.length < 10) return;
+      if (!body || body.length < 50) return;
 
-      // 尝试多种模式提取视频 URL
-      const patterns = [
-        /photoUrl["']?\s*[:=]\s*["']([^"']+)["']/,
-        /"url"\s*:\s*"([^"]+\.mp4[^"]*)"/,
-        /"mainUrl"\s*:\s*"([^"]+)"/,
-        /"playUrl"\s*:\s*"([^"]+)"/,
-        /"key"\s*:\s*"([^"]+\.mp4[^"]*)"/,
-        /https?:\/\/[^"'\s]+\.mp4[^"'\s]*/,
-      ];
+      // 1. 优先匹配 photoUrl（快手主视频 URL 字段）
+      const photoMatch = body.match(/photoUrl["']?\s*[:=]\s*["']([^"']+)["']/);
+      if (photoMatch) {
+        const found = photoMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+        if (found.includes('mp4') || found.includes('djvod') || found.includes('kwimgs')) {
+          videoUrl = found;
+          console.log(`[playwright] Kuaishou photoUrl: ${videoUrl.substring(0, 100)}`);
+        }
+      }
 
-      for (const p of patterns) {
-        const m = body.match(p);
-        if (m) {
-          const found = (m[1] || m[0]).replace(/\\u0026/g, '&').replace(/\\/g, '');
-          // 过滤掉非视频 URL（接受常见 CDN 域名和视频扩展名）
-          if (found.includes('.mp4') || found.includes('video') || found.includes('play') ||
-              found.includes('djvod') || found.includes('kwimgs') || found.includes('ndcimgs') ||
-              found.includes('kuaishou') || found.includes('gifshow')) {
-            videoUrl = found;
-            console.log(`[playwright] Kuaishou URL found: ${videoUrl.substring(0, 100)}`);
-            break;
+      // 2. 如果没找到 photoUrl，尝试其他视频 URL 模式
+      if (!videoUrl) {
+        const urlPatterns = [
+          /"mainUrl"\s*:\s*"([^"]+)"/,
+          /"playUrl"\s*:\s*"([^"]+)"/,
+          /"url"\s*:\s*"([^"]+\.mp4[^"]*)"/,
+        ];
+        for (const p of urlPatterns) {
+          const m = body.match(p);
+          if (m) {
+            const found = m[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+            if (found.includes('mp4') || found.includes('djvod')) {
+              videoUrl = found;
+              console.log(`[playwright] Kuaishou URL found: ${videoUrl.substring(0, 100)}`);
+              break;
+            }
           }
         }
       }
 
-      // 提取标题
+      // 3. 提取标题
       if (!videoTitle || videoTitle === '快手视频') {
         const tm = body.match(/"caption"\s*:\s*"([^"]+)"/);
         if (tm) videoTitle = tm[1].slice(0, 100);
