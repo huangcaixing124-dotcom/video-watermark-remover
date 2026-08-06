@@ -162,13 +162,14 @@ Page({
   _downloadToPhone(url, info) {
     return new Promise((resolve) => {
       this._phoneCachePath = null;
-      this.setData({ downloading: true, saving: true, statusText: '下载到手机...', statusHint: '0%', progress: 0 });
+      this.setData({ downloading: true, saving: true, statusText: '下载到手机...', statusHint: '0%', progress: 0, _phoneCachePath: false });
 
       const downloadTask = wx.downloadFile({
         url,
         success: (res) => {
           if (res.statusCode === 200) {
             this._phoneCachePath = res.tempFilePath;
+            this.setData({ _phoneCachePath: true });
           }
           this.setData({
             progress: 100,
@@ -289,7 +290,7 @@ Page({
       url: '', videoInfo: null, taskId: null, progress: 0,
       statusText: '', statusHint: '', loading: false,
       downloading: false, saving: false, error: '',
-      detectedUrl: '',
+      detectedUrl: '', _phoneCachePath: false,
     });
     this._phoneCachePath = null;
     this.detectClipboard();
