@@ -331,7 +331,7 @@ function runWhisper(audioPath, outputDir, modelSize, language, device, computeTy
 
     proc.on('close', code => {
       if (code !== 0) {
-        reject(new Error(stderr.slice(0, 500) || `Whisper exit ${code}`));
+        reject(new Error(stderr.slice(0, 2000) || `Whisper exit ${code}`));
         return;
       }
 

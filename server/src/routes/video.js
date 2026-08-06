@@ -23,6 +23,9 @@ const bridgeQueue = require('../services/bridgeQueue');
 const config = require('../config');
 const { generateId, detectPlatform, formatDuration } = require('../utils/helpers');
 
+/** Max duration in seconds for auto-download (10 minutes). */
+const MAX_DURATION_SECONDS = 600;
+
 /** Ensure a URL uses HTTPS (replace HTTP). */
 function ensureHttps(url) {
   if (!url || typeof url !== 'string') return url;
@@ -94,7 +97,28 @@ router.post('/info', async (req, res) => {
       } else {
         info = await getVideoInfo(url);
       }
-      // 解析成功，同时创建下载任务（后台开始下载）
+      // 解析成功，检查时长
+      if (info.duration > MAX_DURATION_SECONDS) {
+        return res.json({
+          success: true,
+          data: {
+            title: info.title,
+            author: info.author,
+            duration: info.duration,
+            durationFormatted: formatDuration(info.duration),
+            thumbnailUrl: ensureHttps(info.thumbnailUrl),
+            platform: info.platformLabel || platLabel,
+            videoId: info.videoId,
+            webpageUrl: info.webpageUrl,
+            directUrl: info.directUrl,
+            hasOriginal: info.hasOriginal,
+            tooLong: true,
+            message: '视频时长超过10分钟，当前工具仅支持10分钟以内的视频下载',
+          },
+        });
+      }
+
+      // 检查通过，创建下载任务（后台开始下载）
       const task = createTask(url, {
         title: info.title,
         platform: info.platformLabel || platLabel,
@@ -175,7 +199,29 @@ router.post('/info', async (req, res) => {
 
   try {
     const info = await getVideoInfo(url);
-    // 解析成功，同时创建下载任务（后台开始下载）
+
+    // 检查时长
+    if (info.duration > MAX_DURATION_SECONDS) {
+      return res.json({
+        success: true,
+        data: {
+          title: info.title,
+          author: info.author,
+          duration: info.duration,
+          durationFormatted: formatDuration(info.duration),
+          thumbnailUrl: ensureHttps(info.thumbnailUrl),
+          platform: info.platformLabel,
+          videoId: info.videoId,
+          webpageUrl: info.webpageUrl,
+          directUrl: info.directUrl,
+          hasOriginal: info.hasOriginal,
+          tooLong: true,
+          message: '视频时长超过10分钟，当前工具仅支持10分钟以内的视频下载',
+        },
+      });
+    }
+
+    // 检查通过，创建下载任务（后台开始下载）
     const task = createTask(url, {
       title: info.title,
       platform: info.platformLabel,

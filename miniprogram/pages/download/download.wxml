@@ -14,7 +14,7 @@
       <view class="input-btn" wx:if="{{url}}" bindtap="clearUrl">✕</view>
     </view>
     <view class="action-row">
-      <button class="btn btn-primary action-btn" bindtap="pasteAndDownload" disabled="{{loading || downloading || saving || (taskId && progress >= 100)}}">
+      <button class="btn btn-primary action-btn" bindtap="pasteAndDownload" disabled="{{loading || downloading || saving}}">
         {{loading ? '⏳ 解析中...' : downloading ? '⏳ 下载中...' : '📋 粘贴并解析'}}
       </button>
       <button class="btn btn-secondary action-btn-secondary" wx:if="{{url || videoInfo || taskId || error}}" bindtap="newDownload">清空链接</button>

@@ -126,20 +126,12 @@ function getTaskFile(taskId) {
   return task.filePath;
 }
 
-/** Cleanup old completed/failed tasks AND timeout hung downloads. */
+/** Cleanup old completed/failed tasks. */
 function cleanup() {
   const now = Date.now();
   const ttlMs = config.completedTaskTTLSeconds * 1000;
-  const downloadTimeoutMs = (config.downloadTimeout || 300) * 1000; // default 5 min
 
   for (const [id, task] of tasks) {
-    // Timeout hung downloads
-    if (task.status === 'downloading' && now - task.createdAt > downloadTimeoutMs) {
-      console.warn(`[downloader] Task ${id} timed out after ${downloadTimeoutMs/1000}s`);
-      task.status = 'failed';
-      task.error = '下载超时，请重试。如果问题持续，可能需要浏览器辅助下载。';
-    }
-
     // Cleanup old completed/failed tasks
     if (task.status === 'completed' || task.status === 'failed') {
       if (now - task.createdAt > ttlMs) {

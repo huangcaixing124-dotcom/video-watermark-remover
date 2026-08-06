@@ -12,13 +12,53 @@ const fs = require('fs');
 const router = express.Router();
 
 const { createTask, getTask, getTranscriptText, getSrtPath, startCleanup } = require('../services/transcriber');
+const { getVideoInfo } = require('../services/ytdlp');
+const { detectPlatform, formatDuration } = require('../utils/helpers');
 const config = require('../config');
 
+/** Max duration in seconds for transcription (10 minutes). */
+const MAX_DURATION_SECONDS = 600;
+
 /** Start a transcription task. */
-router.post('/start', (req, res) => {
+router.post('/start', async (req, res) => {
   const { url, language = 'zh' } = req.body;
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: '请提供视频链接', field: 'url' });
+  }
+
+  // 先解析视频信息，检查时长
+  try {
+    const { needsBridge } = detectPlatform(url);
+    let duration = 0;
+
+    if (!needsBridge) {
+      // 对于不需要桥接的平台，直接用 yt-dlp 获取时长
+      try {
+        const info = await getVideoInfo(url);
+        if (info && info.duration) {
+          duration = info.duration;
+        }
+      } catch (infoErr) {
+        // 解析失败不阻止转录，让转录流程自己处理
+        console.log(`[transcript] Info check failed, proceeding: ${infoErr.message}`);
+      }
+    } else {
+      // 需要桥接的平台，时长可能无法获取，跳过检查
+      console.log(`[transcript] Bridge platform, skipping duration check`);
+    }
+
+    if (duration > MAX_DURATION_SECONDS) {
+      return res.json({
+        success: false,
+        error: `视频时长 ${formatDuration(duration)}，超过10分钟限制。当前工具仅支持10分钟以内的视频文案提取。`,
+        tooLong: true,
+        duration: duration,
+        durationFormatted: formatDuration(duration),
+      });
+    }
+  } catch (err) {
+    // 如果解析失败，不阻止转录
+    console.log(`[transcript] Duration check error, proceeding: ${err.message}`);
   }
 
   try {

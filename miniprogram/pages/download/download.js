@@ -135,17 +135,27 @@ Page({
       if (vinfo.thumbnailUrl) vinfo.thumbnailUrl = proxyImage(vinfo.thumbnailUrl);
       this.setData({ videoInfo: vinfo });
 
+      // 检查视频时长是否超过10分钟
+      if (vinfo.tooLong) {
+        this.setData({
+          error: `⚠️ ${vinfo.message || '视频时长超过10分钟限制'}\n\n当前视频时长: ${vinfo.durationFormatted || '未知'}\n\n请使用其他工具下载长视频。`,
+          loading: false,
+        });
+        return;
+      }
+
       // 如果有 taskId，自动开始轮询下载进度
       if (res.data.taskId) {
         const taskId = res.data.taskId;
         this.setData({ taskId, downloading: true, statusText: '下载中...', statusHint: '0%' });
         try {
-          await pollTask(`/api/video/task/${taskId}`, 2000, 180, (st, p) => {
+          await pollTask(`/api/video/task/${taskId}`, 2000, 600, (st, p) => {
             // 限制最大 99%，避免触发完成状态（等 _cacheToPhone 完成才到 100%）
             const capped = Math.min(p || 0, 99);
             this.setData({ progress: capped, statusText: '下载中...', statusHint: `${capped}%` });
           });
           // 服务器下载完成，开始传输到手机
+          this._cachingInProgress = true; // 提前标记，防止 _checkTaskNow 重复调用
           this.setData({ progress: 80, statusText: '正在传输到手机...', statusHint: '缓存中' });
           // 后台缓存到手机
           await this._cacheToPhone(taskId);
@@ -157,7 +167,13 @@ Page({
           });
           wx.showToast({ title: '下载完成', icon: 'success' });
         } catch (pollErr) {
-          this.setData({ error: pollErr.message || '下载失败', downloading: false });
+          // 区分超时和其他错误
+          const errMsg = pollErr.message || '';
+          if (errMsg.includes('超时') || errMsg.includes('timeout')) {
+            this.setData({ error: '下载超时，请重试。如果问题持续，请检查网络后重试。', downloading: false });
+          } else {
+            this.setData({ error: errMsg, downloading: false });
+          }
         }
       }
     } catch (err) {

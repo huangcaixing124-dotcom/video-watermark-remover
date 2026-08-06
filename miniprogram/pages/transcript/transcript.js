@@ -109,7 +109,14 @@ Page({
     this.setData({ loading: true, error: '', text: null, progress: 0 });
     try {
       const res = await post('/api/transcript/start', { url, language: 'zh' });
-      if (!res.success) return void this.setData({ error: res.error || '任务创建失败' });
+      if (!res.success) {
+        if (res.tooLong) {
+          this.setData({ error: `⚠️ ${res.error}`, loading: false });
+        } else {
+          this.setData({ error: res.error || '任务创建失败' });
+        }
+        return;
+      }
       const taskId = res.data.id;
       this.setData({ taskId });
       // 轮询等待任务完成，返回的 status.text 是 SRT 格式

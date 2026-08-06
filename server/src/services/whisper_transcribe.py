@@ -4,7 +4,9 @@ Called by Node.js server for video text extraction.
 """
 import sys
 import os
+import traceback
 from pathlib import Path
+
 
 def main():
     if len(sys.argv) < 7:
@@ -50,56 +52,62 @@ def main():
     )
 
     print("Transcribing...")
-    segments, info = model.transcribe(
-        audio_path,
-        language=language,
-        beam_size=5,
-        vad_filter=True,
-        vad_parameters={
-            "threshold": 0.1,      # Lower threshold to catch soft speech
-            "min_silence_duration_ms": 300,  # Shorter silence to catch more segments
-        },
-    )
+    try:
+        segments, info = model.transcribe(
+            audio_path,
+            language=language,
+            beam_size=3,
+            vad_filter=True,
+            vad_parameters={
+                "threshold": 0.5,
+                "min_silence_duration_ms": 500,
+            },
+        )
 
-    # Generate SRT
-    srt_path = Path(output_dir) / "output.srt"
-    srt_lines = []
-    i = 1
-    for seg in segments:
-        start = seg.start
-        end = seg.end
-        text = seg.text.strip()
-        if not text:
-            continue
-        # Convert traditional Chinese to simplified
-        if t2s_conv:
-            text = t2s_conv(text)
-        def fmt_ts(t):
-            h = int(t // 3600)
-            m = int((t % 3600) // 60)
-            s = int(t % 60)
-            ms = int((t % 1) * 1000)
-            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-        srt_lines.append(f"{i}")
-        srt_lines.append(f"{fmt_ts(start)} --> {fmt_ts(end)}")
-        srt_lines.append(text)
-        srt_lines.append("")
-        i += 1
+        # Generate SRT
+        srt_path = Path(output_dir) / "output.srt"
+        srt_lines = []
+        i = 1
+        for seg in segments:
+            start = seg.start
+            end = seg.end
+            text = seg.text.strip()
+            if not text:
+                continue
+            # Convert traditional Chinese to simplified
+            if t2s_conv:
+                text = t2s_conv(text)
+            def fmt_ts(t):
+                h = int(t // 3600)
+                m = int((t % 3600) // 60)
+                s = int(t % 60)
+                ms = int((t % 1) * 1000)
+                return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+            srt_lines.append(f"{i}")
+            srt_lines.append(f"{fmt_ts(start)} --> {fmt_ts(end)}")
+            srt_lines.append(text)
+            srt_lines.append("")
+            i += 1
 
-    srt_path.write_text("\n".join(srt_lines), encoding="utf-8")
+        srt_path.write_text("\n".join(srt_lines), encoding="utf-8")
 
-    # Generate plain text (filter out SRT timestamps and numbers)
-    text_path = Path(output_dir) / "output.txt"
-    text_lines = []
-    for s in srt_lines:
-        stripped = s.strip()
-        if not stripped or '-->' in stripped or stripped.isdigit():
-            continue
-        text_lines.append(stripped)
-    text_path.write_text("\n".join(text_lines), encoding="utf-8")
+        # Generate plain text (filter out SRT timestamps and numbers)
+        text_path = Path(output_dir) / "output.txt"
+        text_lines = []
+        for s in srt_lines:
+            stripped = s.strip()
+            if not stripped or '-->' in stripped or stripped.isdigit():
+                continue
+            text_lines.append(stripped)
+        text_path.write_text("\n".join(text_lines), encoding="utf-8")
 
-    detected_lang = info.language or 'unknown'
-    print(f"Transcription complete. Language: {detected_lang} ({info.language_probability:.1%})")
+        detected_lang = info.language or 'unknown'
+        print(f"Transcription complete. Language: {detected_lang} ({info.language_probability:.1%})")
+
+    except Exception as e:
+        error_msg = f"Whisper transcription failed: {e}\n{traceback.format_exc()}"
+        print(error_msg, file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

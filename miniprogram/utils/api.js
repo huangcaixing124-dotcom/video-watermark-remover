@@ -26,7 +26,7 @@ function request(method, url, data = {}) {
 function get(url, data) { return request('GET', url, data); }
 function post(url, data) { return request('POST', url, data); }
 
-function pollTask(url, interval = 2000, maxAttempts = 180, onProgress) {
+function pollTask(url, interval = 2000, maxAttempts = 600, onProgress) {
   return new Promise((resolve, reject) => {
     let attempts = 0;
     function check() {
