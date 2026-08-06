@@ -14,9 +14,18 @@ def main():
     audio_path = sys.argv[1]
     output_dir = sys.argv[2]
     model_size = sys.argv[3]
-    language = sys.argv[4]
+    language = sys.argv[4] if sys.argv[4] != 'auto' else None
     device = sys.argv[5]
     compute_type = sys.argv[6]
+
+    # Try to load zhconv for traditional→simplified Chinese conversion
+    t2s_conv = None
+    try:
+        from zhconv import convert
+        t2s_conv = lambda t: convert(t, 'zh-cn')
+        print("zhconv loaded for simplified Chinese conversion")
+    except ImportError:
+        pass
 
     from faster_whisper import WhisperModel
 
@@ -47,8 +56,8 @@ def main():
         beam_size=5,
         vad_filter=True,
         vad_parameters={
-            "threshold": 0.3,
-            "min_silence_duration_ms": 500,
+            "threshold": 0.1,      # Lower threshold to catch soft speech
+            "min_silence_duration_ms": 300,  # Shorter silence to catch more segments
         },
     )
 
@@ -62,6 +71,9 @@ def main():
         text = seg.text.strip()
         if not text:
             continue
+        # Convert traditional Chinese to simplified
+        if t2s_conv:
+            text = t2s_conv(text)
         def fmt_ts(t):
             h = int(t // 3600)
             m = int((t % 3600) // 60)
@@ -76,12 +88,18 @@ def main():
 
     srt_path.write_text("\n".join(srt_lines), encoding="utf-8")
 
-    # Generate plain text
+    # Generate plain text (filter out SRT timestamps and numbers)
     text_path = Path(output_dir) / "output.txt"
-    text_lines = [s for s in srt_lines if not s.endswith("-->") and s.strip() and not s.isdigit()]
+    text_lines = []
+    for s in srt_lines:
+        stripped = s.strip()
+        if not stripped or '-->' in stripped or stripped.isdigit():
+            continue
+        text_lines.append(stripped)
     text_path.write_text("\n".join(text_lines), encoding="utf-8")
 
-    print(f"Transcription complete. Language: {info.language} ({info.language_probability:.1%})")
+    detected_lang = info.language or 'unknown'
+    print(f"Transcription complete. Language: {detected_lang} ({info.language_probability:.1%})")
 
 
 if __name__ == "__main__":
