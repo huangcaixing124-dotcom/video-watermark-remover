@@ -9,12 +9,10 @@ Page({
     statusText: '', statusHint: '',
     loading: false, downloading: false, saving: false,
     error: '',
-    // 剪贴板检测
     detectedUrl: '', detectedPlatform: '',
-    // 视频预览
-    showPreview: false,
-    previewUrl: '',
-    previewTitle: '',
+    showPreview: false, previewUrl: '', previewTitle: '',
+    // 手机端缓存文件路径（用于 WXML 条件判断）
+    phoneCacheReady: false,
   },
 
   onLoad() {
@@ -22,7 +20,6 @@ Page({
     this.detectClipboard();
   },
 
-  // ── 分享 ──
   onShareAppMessage() {
     const info = this.data.videoInfo;
     return {
@@ -40,7 +37,6 @@ Page({
   },
 
   onShow() {
-    // 从后台切回前台时，检查任务是否已完成
     if (this.data.taskId && this.data.downloading) {
       this._checkTaskNow();
     }
@@ -57,7 +53,6 @@ Page({
       success: (res) => {
         const data = res.data || {};
         if (data.status === 'completed') {
-          // 服务器下载完成，开始下载到手机
           const dlUrl = `${apiBase}/api/video/file/${taskId}`;
           this._downloadToPhone(dlUrl);
         }
@@ -67,7 +62,6 @@ Page({
 
   onThemeChange(d) { this.setData({ isDark: d }); },
 
-  // ── 剪贴板检测 ──
   detectClipboard() {
     wx.getClipboardData({
       success: (res) => {
@@ -79,7 +73,6 @@ Page({
     });
   },
 
-  // 粘贴并解析（一键操作）
   pasteAndDownload() {
     if (this._busy) return;
     this._busy = true;
@@ -112,12 +105,12 @@ Page({
     const url = extractUrl(this.data.url);
     if (!url) { this._busy = false; return wx.showToast({ title: '未找到有效链接', icon: 'none' }); }
     if (this.data.downloading) { this._busy = false; return; }
-    this.setData({ url, loading: true, downloading: false, error: '', videoInfo: null, taskId: null, progress: 0, statusText: '', statusHint: '' });
+    this.setData({ url, loading: true, downloading: false, error: '', videoInfo: null, taskId: null, progress: 0, statusText: '', statusHint: '', phoneCacheReady: false });
+    this._phoneCachePath = null;
     try {
       const res = await post('/api/video/info', { url });
       if (!res.success) return void this.setData({ error: res.error || '解析失败', loading: false });
 
-      // 显示视频信息
       const vinfo = res.data;
       if (vinfo.thumbnailUrl) vinfo.thumbnailUrl = proxyImage(vinfo.thumbnailUrl);
       this.setData({ videoInfo: vinfo });
@@ -125,7 +118,7 @@ Page({
       const apiBase = getApp().globalData.apiBase;
       let downloadUrl = null;
 
-      // 1. 有 directUrl → 直接通过代理下载到手机（最快）
+      // 1. 有 directUrl → 直接通过代理下载到手机（无需等服务器）
       if (vinfo.directUrl) {
         downloadUrl = `${apiBase}/api/video/proxy?url=${encodeURIComponent(vinfo.directUrl)}`;
       }
@@ -139,9 +132,9 @@ Page({
         downloadUrl = `${apiBase}/api/video/file/${taskId}`;
       }
 
-      // 3. 下载到手机（显示实时进度）
+      // 3. 下载到手机
       if (downloadUrl) {
-        await this._downloadToPhone(downloadUrl, res.data);
+        await this._downloadToPhone(downloadUrl);
         // 添加到历史
         getApp().addToHistory({
           url, title: res.data.title, platform: res.data.platform,
@@ -159,17 +152,17 @@ Page({
   },
 
   // 下载到手机（显示实时进度）
-  _downloadToPhone(url, info) {
+  _downloadToPhone(url) {
     return new Promise((resolve) => {
       this._phoneCachePath = null;
-      this.setData({ downloading: true, saving: true, statusText: '下载到手机...', statusHint: '0%', progress: 0, _phoneCachePath: false });
+      this.setData({ downloading: true, saving: true, statusText: '下载到手机...', statusHint: '0%', progress: 0, phoneCacheReady: false });
 
       const downloadTask = wx.downloadFile({
         url,
         success: (res) => {
           if (res.statusCode === 200) {
             this._phoneCachePath = res.tempFilePath;
-            this.setData({ _phoneCachePath: true });
+            this.setData({ phoneCacheReady: true });
           }
           this.setData({
             progress: 100,
@@ -193,37 +186,42 @@ Page({
         },
       });
 
-      // 实时更新进度（0-100% 显示手机端真实下载进度）
+      // 实时更新进度（手机端真实下载进度）
       downloadTask.onProgressUpdate((res) => {
         this.setData({ progress: res.progress || 0, statusHint: `${res.progress || 0}%` });
       });
     });
   },
 
-  // 保存到相册（直接用缓存文件）
+  // 保存到相册
   async saveToAlbum() {
-    if (!this.data.taskId && !this._phoneCachePath) return;
     if (this.data.saving) return;
-    this.setData({ saving: true });
 
-    try {
-      // 优先用缓存文件
-      if (this._phoneCachePath) {
+    // 优先使用已缓存到手机的文件
+    if (this._phoneCachePath) {
+      this.setData({ saving: true });
+      try {
         try {
           await wx.saveVideoToPhotosAlbum({ filePath: this._phoneCachePath });
         } catch {
-          try { await wx.authorize({ scope: 'scope.writePhotosAlbum' }); } catch {
-            wx.showToast({ title: '请在设置中开启相册权限', icon: 'none' });
-            return;
-          }
+          await wx.authorize({ scope: 'scope.writePhotosAlbum' });
           await wx.saveVideoToPhotosAlbum({ filePath: this._phoneCachePath });
         }
         wx.showToast({ title: '已保存到相册', icon: 'success' });
         setTimeout(() => this.resetAll(), 500);
-        return;
+      } catch (err) {
+        console.error('[save] error:', err);
+        wx.showToast({ title: '保存失败，请重试', icon: 'none' });
+      } finally {
+        this.setData({ saving: false });
       }
+      return;
+    }
 
-      // 没有缓存，下载并保存
+    // 没有缓存文件但有 taskId，下载并保存
+    if (!this.data.taskId) return;
+    this.setData({ saving: true });
+    try {
       wx.showToast({ title: '正在下载视频...', icon: 'none', duration: 15000 });
       const apiBase = getApp().globalData.apiBase;
       const dlUrl = `${apiBase}/api/video/file/${this.data.taskId}`;
@@ -242,45 +240,29 @@ Page({
     }
   },
 
-  // 下载新视频（清空状态回到初始）
   newDownload() {
     this._busy = false;
     this.resetAll();
   },
 
-  // 重试
-  retry() {
-    this.parseVideo();
-  },
+  retry() { this.parseVideo(); },
 
-  // 跳转到文案页
   goTranscript() { wx.switchTab({ url: '/pages/transcript/transcript' }); },
   goSettings() { wx.navigateTo({ url: '/pages/settings/settings' }); },
 
-  // ── 视频预览 ──
   showPreview() {
     const info = this.data.videoInfo;
     if (!info) return wx.showToast({ title: '暂无视频信息', icon: 'none' });
     const apiBase = getApp().globalData.apiBase;
-
     let previewUrl = '';
-
-    // 1. 优先使用服务器本地文件
     if (this.data.taskId) {
       previewUrl = `${apiBase}/api/video/file/${this.data.taskId}`;
-    }
-    // 2. 回退到 CDN 代理
-    else if (info.directUrl) {
+    } else if (info.directUrl) {
       previewUrl = `${apiBase}/api/video/proxy?url=${encodeURIComponent(info.directUrl)}`;
     } else {
       return wx.showToast({ title: '暂无预览地址', icon: 'none' });
     }
-
-    this.setData({
-      previewUrl,
-      previewTitle: info.title || '视频预览',
-      showPreview: true,
-    });
+    this.setData({ previewUrl, previewTitle: info.title || '视频预览', showPreview: true });
   },
 
   hidePreview() { this.setData({ showPreview: false, previewUrl: '', previewTitle: '' }); },
@@ -290,7 +272,7 @@ Page({
       url: '', videoInfo: null, taskId: null, progress: 0,
       statusText: '', statusHint: '', loading: false,
       downloading: false, saving: false, error: '',
-      detectedUrl: '', _phoneCachePath: false,
+      detectedUrl: '', phoneCacheReady: false,
     });
     this._phoneCachePath = null;
     this.detectClipboard();

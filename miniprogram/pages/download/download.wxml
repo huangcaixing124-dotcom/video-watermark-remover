@@ -14,7 +14,7 @@
       <view class="input-btn" wx:if="{{url}}" bindtap="clearUrl">✕</view>
     </view>
     <view class="action-row">
-      <button class="btn btn-primary action-btn" bindtap="pasteAndDownload" disabled="{{loading || downloading || saving || (_phoneCachePath) || (taskId && progress >= 100)}}">
+      <button class="btn btn-primary action-btn" bindtap="pasteAndDownload" disabled="{{loading || downloading || saving || phoneCacheReady || (taskId && progress >= 100)}}">
         {{loading ? '⏳ 解析中...' : downloading ? '⏳ 下载中...' : '📋 粘贴并解析'}}
       </button>
       <button class="btn btn-secondary action-btn-secondary" wx:if="{{url || videoInfo || taskId || error}}" bindtap="newDownload">清空链接</button>
@@ -48,7 +48,7 @@
     </view>
 
     <!-- 下载完成 -->
-    <view class="complete-section" wx:elif="{{progress >= 100 && (taskId || _phoneCachePath)}}">
+    <view class="complete-section" wx:elif="{{progress >= 100 && (taskId || phoneCacheReady)}}">
       <view class="complete-icon">✅</view>
       <text class="complete-text">下载完成！</text>
       <text class="complete-hint">点击下方按钮保存到手机相册</text>
