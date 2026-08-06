@@ -167,31 +167,27 @@ Page({
   // 后台缓存视频到手机，完成后才显示下载完成
   _cacheToPhone(taskId) {
     return new Promise((resolve) => {
+      this._precacheDone = false;
+      this._precachePath = null;
+      this.setData({ statusText: '正在传输到手机...', statusHint: '缓存中', saving: true });
+
       const apiBase = getApp().globalData.apiBase;
       const url = `${apiBase}/api/video/file/${taskId}`;
-
-      this.setData({ statusText: '正在传输到手机...', statusHint: '缓存中' });
 
       const downloadTask = wx.downloadFile({
         url,
         success: (res) => {
           if (res.statusCode === 200) {
             this._precachePath = res.tempFilePath;
-            this.setData({
-              progress: 100,
-              statusText: '下载完成！',
-              statusHint: '点击下方按钮保存到相册',
-              downloading: false,
-            });
-          } else {
-            this.setData({
-              progress: 100,
-              statusText: '下载完成！',
-              statusHint: '点击下方按钮保存到相册',
-              downloading: false,
-            });
           }
           this._precacheDone = true;
+          this.setData({
+            progress: 100,
+            statusText: '下载完成！',
+            statusHint: '点击下方按钮保存到相册',
+            downloading: false,
+            saving: false,
+          });
           resolve();
         },
         fail: () => {
@@ -201,12 +197,13 @@ Page({
             statusText: '下载完成！',
             statusHint: '点击下方按钮保存到相册',
             downloading: false,
+            saving: false,
           });
           resolve();
         },
       });
 
-      // 实时更新传输进度
+      // 实时更新传输进度（80-100% 表示传输到手机阶段）
       downloadTask.onProgressUpdate((res) => {
         this.setData({ progress: 80 + Math.floor(res.progress * 0.2) });
       });
@@ -222,40 +219,47 @@ Page({
     try {
       let filePath = this._precachePath;
 
-      // 如果缓存还没完成，等一下（最多等5秒）
+      // 如果缓存还没完成，等一下（最多等30秒）
       if (!filePath && !this._precacheDone) {
+        wx.showToast({ title: '等待传输完成...', icon: 'none', duration: 10000 });
         await new Promise((resolve) => {
           const check = setInterval(() => {
             if (this._precacheDone) { clearInterval(check); resolve(); }
-          }, 200);
-          setTimeout(() => { clearInterval(check); resolve(); }, 5000);
+          }, 500);
+          setTimeout(() => { clearInterval(check); resolve(); }, 30000);
         });
         filePath = this._precachePath;
       }
 
-      // 如果缓存失败，直接下载
-      if (!filePath) {
-        wx.showToast({ title: '正在下载视频...', icon: 'none', duration: 10000 });
+      // 如果缓存有文件，直接用缓存的
+      if (filePath) {
+        try {
+          await wx.saveVideoToPhotosAlbum({ filePath });
+        } catch {
+          try { await wx.authorize({ scope: 'scope.writePhotosAlbum' }); } catch {
+            wx.showToast({ title: '请在设置中开启相册权限', icon: 'none' });
+            return;
+          }
+          await wx.saveVideoToPhotosAlbum({ filePath });
+        }
+        wx.showToast({ title: '已保存到相册', icon: 'success' });
+        setTimeout(() => this.resetAll(), 500);
+        return;
+      }
+
+      // 缓存失败，直接下载并保存
+      wx.showToast({ title: '正在下载视频...', icon: 'none', duration: 10000 });
+      try {
         const temp = await new Promise((ok, fail) => wx.downloadFile({
           url: `${getApp().globalData.apiBase}/api/video/file/${this.data.taskId}`,
           success: ok, fail,
         }));
-        filePath = temp.tempFilePath;
+        await wx.saveVideoToPhotosAlbum({ tempFilePath: temp.tempFilePath });
+        wx.showToast({ title: '已保存到相册', icon: 'success' });
+        setTimeout(() => this.resetAll(), 500);
+      } catch (dlErr) {
+        throw new Error('下载失败');
       }
-
-      // 保存到相册（权限不足时自动请求）
-      try {
-        await wx.saveVideoToPhotosAlbum({ filePath });
-      } catch {
-        try { await wx.authorize({ scope: 'scope.writePhotosAlbum' }); } catch {
-          wx.showToast({ title: '请在设置中开启相册权限', icon: 'none' });
-          return;
-        }
-        await wx.saveVideoToPhotosAlbum({ filePath });
-      }
-
-      wx.showToast({ title: '已保存到相册', icon: 'success' });
-      setTimeout(() => this.resetAll(), 500);
     } catch (err) {
       console.error('[save] error:', err);
       wx.showToast({ title: '保存失败，请重试', icon: 'none' });

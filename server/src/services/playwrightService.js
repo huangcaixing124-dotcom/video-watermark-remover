@@ -161,9 +161,11 @@ async function extractKuaishou(page, url, timeout) {
       for (const p of patterns) {
         const m = body.match(p);
         if (m) {
-          const found = m[1] || m[0];
-          // 过滤掉非视频 URL
-          if (found.includes('.mp4') || found.includes('video') || found.includes('play')) {
+          const found = (m[1] || m[0]).replace(/\\u0026/g, '&').replace(/\\/g, '');
+          // 过滤掉非视频 URL（接受常见 CDN 域名和视频扩展名）
+          if (found.includes('.mp4') || found.includes('video') || found.includes('play') ||
+              found.includes('djvod') || found.includes('kwimgs') || found.includes('ndcimgs') ||
+              found.includes('kuaishou') || found.includes('gifshow')) {
             videoUrl = found;
             console.log(`[playwright] Kuaishou URL found: ${videoUrl.substring(0, 100)}`);
             break;
@@ -179,7 +181,11 @@ async function extractKuaishou(page, url, timeout) {
     } catch {}
   });
 
-  await page.goto(url, { waitUntil: 'networkidle', timeout });
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {
+    console.log('[playwright] Kuaishou page load timeout, continuing with loaded data');
+  });
+  // 等待 API 响应回来
+  await page.waitForTimeout(3000);
   console.log(`[playwright] Kuaishou page loaded, ${responseCount} responses checked`);
 
   // 如果还没找到，尝试从页面 DOM 提取
