@@ -360,7 +360,7 @@ function downloadWithNodeJs(videoUrl, outputPath, options) {
         'Referer': referer,
         'Origin': 'https://www.xiaohongshu.com',
       },
-      timeout: 60000,
+      timeout: 300000,
     }, (res) => {
       if (res.statusCode !== 200) {
         reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
