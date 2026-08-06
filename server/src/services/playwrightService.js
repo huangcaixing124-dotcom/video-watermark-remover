@@ -132,70 +132,73 @@ async function extractVideo(url, options = {}) {
 }
 
 /**
- * 快手提取 — 拦截 GraphQL API 响应中的 photoUrl。
+ * 快手提取 — 监听 API 响应，提取视频 URL。
  */
 async function extractKuaishou(page, url, timeout) {
   let videoUrl = null;
   let videoTitle = '快手视频';
+  let responseCount = 0;
 
-  // 拦截 GraphQL 请求
-  await page.route('**/graphql**', async (route) => {
-    const response = await route.fetch();
+  // 被动监听所有响应，不拦截请求
+  page.on('response', async (response) => {
     try {
+      const ct = response.headers()['content-type'] || '';
+      if (!ct.includes('json') && !ct.includes('text')) return;
+      responseCount++;
       const body = await response.text();
-      const match = body.match(/photoUrl["']?\s*[:=]\s*["']([^"']+)["']/);
-      if (match) {
-        videoUrl = match[1];
-        console.log(`[playwright] Kuaishou photoUrl: ${videoUrl.substring(0, 80)}`);
-      }
-      const titleMatch = body.match(/caption["']?\s*[:=]\s*["']([^"']+)["']/);
-      if (titleMatch) videoTitle = titleMatch[1];
-    } catch {}
-    route.fulfill({ response });
-  });
+      if (!body || body.length < 10) return;
 
-  // 拦截 photo/detail API
-  await page.route('**/photo/detail**', async (route) => {
-    const response = await route.fetch();
-    try {
-      const body = await response.text();
-      const match = body.match(/photoUrl["']?\s*[:=]\s*["']([^"']+)["']/);
-      if (match) {
-        videoUrl = match[1];
-        console.log(`[playwright] Kuaishou photoUrl (detail): ${videoUrl.substring(0, 80)}`);
-      }
-    } catch {}
-    route.fulfill({ response });
-  });
+      // 尝试多种模式提取视频 URL
+      const patterns = [
+        /photoUrl["']?\s*[:=]\s*["']([^"']+)["']/,
+        /"url"\s*:\s*"([^"]+\.mp4[^"]*)"/,
+        /"mainUrl"\s*:\s*"([^"]+)"/,
+        /"playUrl"\s*:\s*"([^"]+)"/,
+        /"key"\s*:\s*"([^"]+\.mp4[^"]*)"/,
+        /https?:\/\/[^"'\s]+\.mp4[^"'\s]*/,
+      ];
 
-  // 拦截所有响应中的 MP4 URL
-  await page.route('**/*', async (route) => {
-    const response = await route.fetch();
-    if (!videoUrl) {
-      try {
-        const ct = response.headers()['content-type'] || '';
-        if (ct.includes('json')) {
-          const body = await response.text();
-          const m = body.match(/https?:\/\/[^"'\s]+\.mp4[^"'\s]*/);
-          if (m) {
-            videoUrl = m[0];
-            console.log(`[playwright] Kuaishou MP4 found: ${videoUrl.substring(0, 80)}`);
+      for (const p of patterns) {
+        const m = body.match(p);
+        if (m) {
+          const found = m[1] || m[0];
+          // 过滤掉非视频 URL
+          if (found.includes('.mp4') || found.includes('video') || found.includes('play')) {
+            videoUrl = found;
+            console.log(`[playwright] Kuaishou URL found: ${videoUrl.substring(0, 100)}`);
+            break;
           }
         }
-      } catch {}
-    }
-    route.fulfill({ response });
+      }
+
+      // 提取标题
+      if (!videoTitle || videoTitle === '快手视频') {
+        const tm = body.match(/"caption"\s*:\s*"([^"]+)"/);
+        if (tm) videoTitle = tm[1].slice(0, 100);
+      }
+    } catch {}
   });
 
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
-  // 等待页面加载，给 API 响应时间
-  await page.waitForTimeout(5000);
+  await page.goto(url, { waitUntil: 'networkidle', timeout });
+  console.log(`[playwright] Kuaishou page loaded, ${responseCount} responses checked`);
 
+  // 如果还没找到，尝试从页面 DOM 提取
   if (!videoUrl) {
-    // 尝试从页面元素中提取
     videoUrl = await page.evaluate(() => {
-      const v = document.querySelector('video source') || document.querySelector('video');
-      return v ? (v.src || v.getAttribute('src')) : null;
+      // 查找 video 元素
+      const v = document.querySelector('video');
+      if (v && v.src) return v.src;
+      // 查找 source 元素
+      const s = document.querySelector('video source');
+      if (s && s.src) return s.src;
+      // 查找所有带视频 URL 的脚本标签
+      const scripts = document.querySelectorAll('script');
+      for (const sc of scripts) {
+        const text = sc.textContent || '';
+        const m = text.match(/https?:\/\/[^"'\s]+\.mp4[^"'\s]*/);
+        if (m) return m[0];
+      }
+      return null;
     }).catch(() => null);
   }
 

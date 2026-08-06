@@ -40,7 +40,28 @@ Page({
   },
 
   onShow() {
-    // 不再做任何自动重置操作
+    // 从后台切回前台时，立即检查任务状态（避免轮询延迟）
+    if (this.data.taskId && this.data.downloading) {
+      this._checkTaskNow();
+    }
+  },
+
+  _checkTaskNow() {
+    const taskId = this.data.taskId;
+    if (!taskId) return;
+    const apiBase = getApp().globalData.apiBase;
+    wx.request({
+      url: `${apiBase}/api/video/task/${taskId}`,
+      method: 'GET',
+      timeout: 5000,
+      success: (res) => {
+        const data = res.data || {};
+        if (data.status === 'completed' && !this._precacheDone) {
+          this.setData({ progress: 80, statusText: '正在传输到手机...', statusHint: '缓存中' });
+          this._cacheToPhone(taskId);
+        }
+      },
+    });
   },
 
   onThemeChange(d) { this.setData({ isDark: d }); },

@@ -36,6 +36,32 @@ Page({
 
   onThemeChange(d) { this.setData({ isDark: d }); },
 
+  onShow() {
+    // 从后台切回前台时，立即检查文案任务状态
+    if (this.data.taskId && this.data.loading) {
+      this._checkTaskNow();
+    }
+  },
+
+  _checkTaskNow() {
+    const taskId = this.data.taskId;
+    if (!taskId) return;
+    const apiBase = getApp().globalData.apiBase;
+    wx.request({
+      url: `${apiBase}/api/transcript/task/${taskId}`,
+      method: 'GET',
+      timeout: 5000,
+      success: (res) => {
+        const data = res.data || {};
+        if (data.status === 'completed' && data.text) {
+          const plainText = this._stripSrtTimestamps(data.text || '');
+          this.setData({ text: plainText || '（文案为空）', progress: 100, statusText: '提取完成', statusHint: '', loading: false });
+          wx.showToast({ title: '文案提取成功', icon: 'success' });
+        }
+      },
+    });
+  },
+
   detectClipboard() {
     wx.getClipboardData({
       success: (res) => {
