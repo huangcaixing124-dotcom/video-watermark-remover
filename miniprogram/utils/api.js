@@ -6,13 +6,14 @@ const app = getApp();
 function request(method, url, data = {}) {
   return new Promise((resolve, reject) => {
     const apiBase = app.globalData.apiBase || 'http://localhost:8800';
+    const isGet = method === 'GET';
     wx.request({
       url: `${apiBase}${url}`,
       method,
-      data: JSON.stringify(data),
+      data: isGet ? data : JSON.stringify(data),
       dataType: 'json',
-      header: { 'Content-Type': 'application/json' },
-      timeout: 60000,
+      header: isGet ? {} : { 'Content-Type': 'application/json' },
+      timeout: 120000,
       success: (res) => {
         if (res.statusCode === 200) resolve(res.data);
         else reject(new Error(res.data?.error || `HTTP ${res.statusCode}`));

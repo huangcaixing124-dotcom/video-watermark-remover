@@ -40,7 +40,7 @@ Page({
   },
 
   onShow() {
-    // 从后台切回前台时，立即检查任务状态（避免轮询延迟）
+    // 从后台切回前台时，如果任务已完成但UI未更新，立即刷新
     if (this.data.taskId && this.data.downloading) {
       this._checkTaskNow();
     }
@@ -140,7 +140,8 @@ Page({
         this.setData({ taskId, downloading: true, statusText: '下载中...', statusHint: '0%' });
         try {
           await pollTask(`/api/video/task/${taskId}`, 2000, 9999, (st, p) => {
-            this.setData({ progress: p || 0, statusText: '下载中...', statusHint: `${p || 0}%` });
+            // 仅更新进度数字，不改变状态文字
+            this.setData({ progress: p || 0, statusHint: `${p || 0}%` });
           });
           // 服务器下载完成，显示保存按钮
           this.setData({
