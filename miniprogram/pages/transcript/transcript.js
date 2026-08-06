@@ -113,7 +113,7 @@ Page({
       const taskId = res.data.id;
       this.setData({ taskId });
       // 轮询等待任务完成，返回的 status.text 是 SRT 格式
-      const status = await pollTask(`/api/transcript/task/${taskId}`, 3000, 240, (st, p) => {
+      const status = await pollTask(`/api/transcript/task/${taskId}`, 3000, 9999, (st, p) => {
         const labels = { downloading: '下载视频中...', extracting: '提取音频中...', transcribing: '语音转文字中...' };
         this.setData({ progress: p || 0, statusText: labels[st] || '处理中...', statusHint: st === 'transcribing' ? '需要几分钟，请稍候' : `${p}%` });
       });

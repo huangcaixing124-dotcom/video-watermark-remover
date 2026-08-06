@@ -144,15 +144,22 @@ async function runTranscription(task) {
       // Standard flow: download full video via yt-dlp
       await downloadVideoWithYTDL(task.url, videoDir);
 
-      // Find downloaded video
+      // Find downloaded audio
       const files = fs.readdirSync(videoDir);
-      const videoFile = files.find(f => f.endsWith('.mp4') || f.endsWith('.webm') || f.endsWith('.mkv'));
-      if (!videoFile) {
-        task.status = 'failed';
-        task.error = '下载视频失败';
-        return;
+      const audioFile = files.find(f => f.endsWith('.m4a') || f.endsWith('.webm') || f.endsWith('.wav') || f.endsWith('.mp3'));
+      if (!audioFile) {
+        // 如果没找到音频文件，尝试找视频文件（兜底）
+        const videoFile = files.find(f => f.endsWith('.mp4') || f.endsWith('.mkv'));
+        if (videoFile) {
+          videoPath = path.join(videoDir, videoFile);
+        } else {
+          task.status = 'failed';
+          task.error = '下载音频失败';
+          return;
+        }
+      } else {
+        videoPath = path.join(videoDir, audioFile);
       }
-      videoPath = path.join(videoDir, videoFile);
 
       // Step 2: Extract audio from video
       task.status = 'extracting';
@@ -198,9 +205,8 @@ function downloadVideoWithYTDL(url, outputDir) {
     const args = [
       '--no-playlist',
       '--no-warnings',
-      '--merge-output-format', 'mp4',
-      '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-      '-o', path.join(outputDir, 'video.%(ext)s'),
+      '-f', 'bestaudio[ext=m4a]/bestaudio/best', // 只下载音频，不下载视频
+      '-o', path.join(outputDir, 'audio.%(ext)s'),
     ];
 
     // Check cookies
@@ -212,7 +218,7 @@ function downloadVideoWithYTDL(url, outputDir) {
     args.push(url);
 
     const proc = spawn('yt-dlp', args, {
-      timeout: 300000,
+      timeout: 0, // 不限时
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -281,7 +287,7 @@ function downloadAudioFromUrl(videoUrl, audioPath, sourceUrl) {
     ];
     const proc = spawn('ffmpeg', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 300000,
+      timeout: 0, // 不限时，等下载自然完成
       windowsHide: true,
     });
     let stderr = '';
@@ -315,7 +321,7 @@ function runWhisper(audioPath, outputDir, modelSize, language, device, computeTy
       language,
       device,
       computeType,
-    ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 0 });
 
     let stdout = '';
     let stderr = '';

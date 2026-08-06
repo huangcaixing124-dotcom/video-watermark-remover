@@ -360,7 +360,7 @@ function downloadWithNodeJs(videoUrl, outputPath, options) {
         'Referer': referer,
         'Origin': 'https://www.xiaohongshu.com',
       },
-      timeout: 300000,
+      timeout: 0, // 不限时
     }, (res) => {
       if (res.statusCode !== 200) {
         reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
@@ -422,7 +422,7 @@ function downloadFromUrl(videoUrl, outputPath, options) {
 
     const proc = spawn('ffmpeg', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 300000,
+      timeout: 0, // 不限时
       windowsHide: true,
     });
 
@@ -479,7 +479,7 @@ function _downloadWithYtdlp(url, outputPath, options = {}) {
 
     const proc = spawn(_findYtdlp(), args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 300000,
+      timeout: 0, // 不限时
       windowsHide: true,
     });
 
@@ -529,7 +529,7 @@ function extractAudio(videoPath, audioPath) {
       audioPath,
     ];
 
-    execFile('ffmpeg', args, { timeout: 300000, windowsHide: true }, (err) => {
+    execFile('ffmpeg', args, { timeout: 0, windowsHide: true }, (err) => {
       if (err) return reject(new Error(`音频提取失败: ${err.message}`));
       resolve(audioPath);
     });
