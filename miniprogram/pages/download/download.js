@@ -118,9 +118,10 @@ Page({
           await pollTask(`/api/video/task/${taskId}`, 2000, 180, (st, p) => {
             this.setData({ progress: p || 0, statusText: '下载中...', statusHint: `${p || 0}%` });
           });
-          this.setData({ progress: 50, statusText: '下载完成，正在传输到手机...', statusHint: '', downloading: false });
-          // 后台缓存到手机，完成后才真正显示下载完成
-          this._cacheToPhone(taskId);
+          // 服务器下载完成，开始传输到手机
+          this.setData({ progress: 80, statusText: '正在传输到手机...', statusHint: '缓存中' });
+          // 后台缓存到手机
+          await this._cacheToPhone(taskId);
           // 添加到历史
           getApp().addToHistory({
             url, title: res.data.title, platform: res.data.platform,
@@ -142,53 +143,51 @@ Page({
 
   // 后台缓存视频到手机，完成后才显示下载完成
   _cacheToPhone(taskId) {
-    const apiBase = getApp().globalData.apiBase;
-    const url = `${apiBase}/api/video/file/${taskId}`;
+    return new Promise((resolve) => {
+      const apiBase = getApp().globalData.apiBase;
+      const url = `${apiBase}/api/video/file/${taskId}`;
 
-    // 继续显示进度，但状态改为"正在传输到手机"
-    this.setData({ statusText: '正在传输到手机...', statusHint: '' });
+      this.setData({ statusText: '正在传输到手机...', statusHint: '缓存中' });
 
-    const downloadTask = wx.downloadFile({
-      url,
-      success: (res) => {
-        if (res.statusCode === 200) {
-          this._precachePath = res.tempFilePath;
-          // 真正完成，显示下载完成
+      const downloadTask = wx.downloadFile({
+        url,
+        success: (res) => {
+          if (res.statusCode === 200) {
+            this._precachePath = res.tempFilePath;
+            this.setData({
+              progress: 100,
+              statusText: '下载完成！',
+              statusHint: '点击下方按钮保存到相册',
+              downloading: false,
+            });
+          } else {
+            this.setData({
+              progress: 100,
+              statusText: '下载完成！',
+              statusHint: '点击下方按钮保存到相册',
+              downloading: false,
+            });
+          }
+          this._precacheDone = true;
+          resolve();
+        },
+        fail: () => {
+          this._precacheDone = true;
           this.setData({
             progress: 100,
             statusText: '下载完成！',
             statusHint: '点击下方按钮保存到相册',
+            downloading: false,
           });
-        }
-        this._precacheDone = true;
-      },
-      fail: () => {
-        this._precacheDone = true;
-        // 缓存失败，仍然显示完成，保存时走回退下载
-        this.setData({
-          progress: 100,
-          statusText: '下载完成！',
-          statusHint: '点击下方按钮保存到相册',
-        });
-      },
-    });
+          resolve();
+        },
+      });
 
-    // 实时更新传输进度
-    downloadTask.onProgressUpdate((res) => {
-      this.setData({ progress: res.progress || 0 });
+      // 实时更新传输进度
+      downloadTask.onProgressUpdate((res) => {
+        this.setData({ progress: 80 + Math.floor(res.progress * 0.2) });
+      });
     });
-
-    // 30秒超时保护
-    setTimeout(() => {
-      if (!this._precacheDone) {
-        this._precacheDone = true;
-        this.setData({
-          progress: 100,
-          statusText: '下载完成！',
-          statusHint: '点击下方按钮保存到相册',
-        });
-      }
-    }, 30000);
   },
 
   // 保存到相册

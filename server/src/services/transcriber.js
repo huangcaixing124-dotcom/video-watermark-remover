@@ -15,6 +15,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { generateId, sleep, formatDuration, getRefererForUrl } = require('../utils/helpers');
+const { extractVideo: playwrightExtract } = require('./playwrightService');
 const bridgeQueue = require('./bridgeQueue');
 const config = require('../config');
 
@@ -83,28 +84,36 @@ async function runTranscription(task) {
     let audioPath = path.join(videoDir, 'audio.wav');
 
     if (task.url.includes('kuaishou.com') || task.url.includes('gifshow.com')) {
-      // Kuaishou: use bridge extension to get video CDN URL, then use ffmpeg for audio
+      // Kuaishou: try Playwright first, then fall back to bridge
       task.progress = 10;
-      console.log(`[transcriber] Kuaishou URL detected, adding to bridge queue: ${task.url.slice(0, 60)}...`);
-      const bridgeTaskId = bridgeQueue.addTask(task.url);
+      console.log(`[transcriber] Kuaishou URL detected, trying Playwright...`);
 
-      // Wait for bridge to process (with timeout)
-      task.progress = 15;
-      let bridgeResult;
+      let videoUrl = null;
       try {
-        bridgeResult = await bridgeQueue.waitForTask(bridgeTaskId, 180000);
-      } catch (bridgeErr) {
-        // If bridge fails, try local file from bridge download
-        console.log(`[transcriber] Bridge wait failed: ${bridgeErr.message}`);
-        throw new Error(`桥接获取视频失败: ${bridgeErr.message}`);
+        const pwResult = await playwrightExtract(task.url, { timeout: 30000 });
+        if (pwResult && pwResult.videoUrl) {
+          videoUrl = pwResult.videoUrl;
+          console.log(`[transcriber] Playwright got Kuaishou URL: ${videoUrl.substring(0, 80)}`);
+        }
+      } catch (pwErr) {
+        console.log(`[transcriber] Playwright failed: ${pwErr.message}, trying bridge...`);
+      }
+
+      // Playwright failed, try bridge
+      if (!videoUrl) {
+        console.log(`[transcriber] Adding to bridge queue: ${task.url.slice(0, 60)}...`);
+        const bridgeTaskId = bridgeQueue.addTask(task.url);
+        task.progress = 15;
+        try {
+          const bridgeResult = await bridgeQueue.waitForTask(bridgeTaskId, 180000);
+          videoUrl = bridgeResult.videoUrl;
+        } catch (bridgeErr) {
+          throw new Error(`桥接获取视频失败: ${bridgeErr.message}`);
+        }
       }
 
       task.progress = 30;
-      const videoUrl = bridgeResult.videoUrl;
-      console.log(`[transcriber] Got Kuaishou video URL, length: ${videoUrl ? videoUrl.length : 0}`);
-
-      // Use ffmpeg to download audio directly from the CDN URL (no full video download)
-      task.progress = 35;
+      // Use ffmpeg to download audio directly from the CDN URL
       await downloadAudioFromUrl(videoUrl, audioPath, task.url);
     } else {
       // Standard flow: download full video via yt-dlp

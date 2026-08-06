@@ -69,8 +69,28 @@ router.post('/info', async (req, res) => {
         if (!videoId) throw new Error('无法从链接中提取 video_id');
         info = await getPlayInfo(videoId);
       } else if (platKey === 'kuaishou') {
-        // Skip Playwright (always fails for Kuaishou), go directly to bridge queue
-        throw new Error('快手需要浏览器辅助解析');
+        // 先尝试 Playwright 无头浏览器提取
+        try {
+          const pwResult = await playwrightExtract(url, { timeout: 30000 });
+          if (pwResult && pwResult.videoUrl) {
+            info = {
+              title: pwResult.title || '快手视频',
+              author: '',
+              duration: 0,
+              thumbnailUrl: null,
+              directUrl: pwResult.videoUrl,
+              platformLabel: '快手',
+              videoId: '',
+              webpageUrl: url,
+              hasOriginal: false,
+            };
+          } else {
+            throw new Error('Playwright 未能提取到视频');
+          }
+        } catch (pwErr) {
+          console.log(`[info] Playwright failed for Kuaishou: ${pwErr.message}, falling back to bridge`);
+          throw new Error('快手需要浏览器辅助解析');
+        }
       } else {
         info = await getVideoInfo(url);
       }
