@@ -573,6 +573,36 @@ router.get('/proxy', async (req, res) => {
 startCleanup();
 
 /**
+ * Image proxy — relays thumbnail images through server to avoid CDN hotlink blocking.
+ * GET /api/video/image?url={encodedImageUrl}
+ */
+router.get('/image', async (req, res) => {
+  const imageUrl = req.query.url;
+  if (!imageUrl) return res.status(400).json({ error: '请提供图片URL' });
+
+  try {
+    const mod = imageUrl.startsWith('https') ? https : http;
+    mod.get(imageUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://www.xiaohongshu.com/',
+      },
+      timeout: 15000,
+    }, (proxyRes) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Content-Type', proxyRes.headers['content-type'] || 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      proxyRes.pipe(res);
+    }).on('error', (err) => {
+      console.error(`[image-proxy] Error: ${err.message}`);
+      res.status(502).json({ error: '图片代理失败' });
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * Debug endpoint: test Doubao API connectivity.
  */
 router.get('/debug/doubao', async (req, res) => {

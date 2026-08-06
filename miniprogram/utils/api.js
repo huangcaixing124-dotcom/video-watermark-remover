@@ -91,4 +91,16 @@ function secureUrl(url) {
   return url.replace(/^http:\/\//i, 'https://');
 }
 
-module.exports = { request, get, post, pollTask, extractUrl, detectPlatform, formatDuration, formatFileSize, formatDate, secureUrl };
+/** Proxy image through server to avoid CDN hotlink blocking (403). */
+function proxyImage(url) {
+  if (!url || typeof url !== 'string') return url;
+  // Only proxy external images that might be blocked
+  if (url.includes('xhscdn.com') || url.includes('hdslb.com') || url.includes('aliyuncs.com')) {
+    const app = getApp();
+    const base = (app && app.globalData && app.globalData.apiBase) || 'http://localhost:8800';
+    return `${base}/api/video/image?url=${encodeURIComponent(url)}`;
+  }
+  return url;
+}
+
+module.exports = { request, get, post, pollTask, extractUrl, detectPlatform, formatDuration, formatFileSize, formatDate, secureUrl, proxyImage };

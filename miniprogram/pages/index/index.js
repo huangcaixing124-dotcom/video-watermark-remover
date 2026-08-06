@@ -59,7 +59,12 @@ Page({
 
   loadRecent() {
     const app = getApp();
-    this.setData({ recentHistory: (app.globalData.downloadHistory || []).slice(0, 5) });
+    const { proxyImage } = require('../../utils/api');
+    const recent = (app.globalData.downloadHistory || []).slice(0, 5).map(item => {
+      if (item.thumbnailUrl) item.thumbnailUrl = proxyImage(item.thumbnailUrl);
+      return item;
+    });
+    this.setData({ recentHistory: recent });
   },
 
   goDownload() { wx.switchTab({ url: '/pages/download/download' }); },

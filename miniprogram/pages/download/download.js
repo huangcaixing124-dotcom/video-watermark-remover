@@ -1,5 +1,5 @@
 // pages/download/download.js
-const { extractUrl, detectPlatform, post, pollTask, secureUrl } = require('../../utils/api');
+const { extractUrl, detectPlatform, post, pollTask, secureUrl, proxyImage } = require('../../utils/api');
 const { checkText } = require('../../utils/security');
 
 Page({
@@ -107,8 +107,10 @@ Page({
       const res = await post('/api/video/info', { url });
       if (!res.success) return void this.setData({ error: res.error || '解析失败', loading: false });
 
-      // 显示视频信息
-      this.setData({ videoInfo: res.data });
+      // 显示视频信息（缩略图走代理）
+      const vinfo = res.data;
+      if (vinfo.thumbnailUrl) vinfo.thumbnailUrl = proxyImage(vinfo.thumbnailUrl);
+      this.setData({ videoInfo: vinfo });
 
       // 如果有 taskId，自动开始轮询下载进度
       if (res.data.taskId) {
@@ -126,7 +128,7 @@ Page({
           getApp().addToHistory({
             url, title: res.data.title, platform: res.data.platform,
             durationFormatted: res.data.durationFormatted,
-            thumbnailUrl: secureUrl(res.data.thumbnailUrl), taskId,
+            thumbnailUrl: proxyImage(secureUrl(res.data.thumbnailUrl)), taskId,
           });
           wx.showToast({ title: '下载完成', icon: 'success' });
         } catch (pollErr) {

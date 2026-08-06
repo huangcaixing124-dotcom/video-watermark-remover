@@ -28,7 +28,11 @@ Page({
 
   loadHistory() {
     const app = getApp();
-    const history = app.globalData.downloadHistory || [];
+    const { proxyImage } = require('../../utils/api');
+    const history = (app.globalData.downloadHistory || []).map(item => {
+      if (item.thumbnailUrl) item.thumbnailUrl = proxyImage(item.thumbnailUrl);
+      return item;
+    });
     this.setData({ history, isEmpty: history.length === 0 });
   },
 
