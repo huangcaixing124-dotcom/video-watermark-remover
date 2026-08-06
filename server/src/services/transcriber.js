@@ -114,7 +114,32 @@ async function runTranscription(task) {
 
       task.progress = 30;
       // Use ffmpeg to download audio directly from the CDN URL
-      await downloadAudioFromUrl(videoUrl, audioPath, task.url);
+      // 如果 CDN URL 过期导致下载失败，重试一次（获取新 URL）
+      let audioOk = false;
+      for (let retry = 0; retry < 2 && !audioOk; retry++) {
+        if (retry > 0) {
+          // 重新获取视频 URL（旧的可能已过期）
+          console.log(`[transcriber] Retrying Kuaishou audio download (attempt ${retry + 1})...`);
+          try {
+            const pwResult = await playwrightExtract(task.url, { timeout: 30000 });
+            if (pwResult && pwResult.videoUrl) {
+              videoUrl = pwResult.videoUrl;
+            }
+          } catch {}
+        }
+        try {
+          await downloadAudioFromUrl(videoUrl, audioPath, task.url);
+          // 验证音频文件是否有效
+          if (fs.existsSync(audioPath) && fs.statSync(audioPath).size > 1024) {
+            audioOk = true;
+          } else {
+            console.warn(`[transcriber] Audio file too small or missing, retrying...`);
+          }
+        } catch (dlErr) {
+          console.warn(`[transcriber] Audio download failed: ${dlErr.message}`);
+          if (retry === 1) throw dlErr;
+        }
+      }
     } else {
       // Standard flow: download full video via yt-dlp
       await downloadVideoWithYTDL(task.url, videoDir);
