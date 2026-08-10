@@ -193,88 +193,60 @@ def extract_douyin(page, url):
 
 
 def extract_kuaishou(page, url):
-    """Extract video info from Kuaishou page.
-    Validates that the extracted video matches the URL's video ID."""
-    import re
+    """Extract video info from Kuaishou page."""
     print(f"[kuaishou] Navigating to {url}", file=sys.stderr)
-
-    # Extract video ID from URL
-    video_id = ''
-    # Format: /short-video/xxxxx or /xxxxx (short link or direct ID)
-    m = re.search(r'/([a-zA-Z0-9]+)(?:\?.*)?$', url.rstrip('/'))
-    if m:
-        video_id = m.group(1)
-        print(f"[kuaishou] Target video ID: {video_id}", file=sys.stderr)
-
     page.goto(url, wait_until='domcontentloaded', timeout=30000)
     time.sleep(3)
 
-    # Method 1: Extract from __APOLLO_STATE__ or __INITIAL_STATE__ (precise match)
+    # Method 1: Extract from __APOLLO_STATE__ or window data
     try:
         data = page.evaluate("""
-            (vid) => {
+            () => {
                 try {
-                    // 1. Apollo state (primary)
-                    const apollo = window.__APOLLO_STATE__;
-                    if (apollo) {
-                        for (const key of Object.keys(apollo)) {
-                            const val = apollo[key];
-                            if (val && typeof val === 'object') {
-                                // Match photo by id
-                                const photo = val.photo || val;
-                                if (photo && (photo.id === vid || photo.photoId === vid)) {
-                                    const url = photo.photoUrl || photo.playUrl || photo.videoUrl || '';
-                                    if (url) return JSON.stringify({video_url: url, title: photo.caption || ''});
-                                }
-                                // Match key containing video ID
-                                if (key.includes(vid) && (val.photoUrl || val.playUrl || val.videoUrl)) {
-                                    const url = val.photoUrl || val.playUrl || val.videoUrl;
-                                    return JSON.stringify({video_url: url, title: val.caption || ''});
-                                }
-                            }
-                        }
-                    }
+                    // Kuaishou uses various data sources
+                    if (window.__APOLLO_STATE__) return JSON.stringify(window.__APOLLO_STATE__);
+                    if (window.__INITIAL_STATE__) return JSON.stringify(window.__INITIAL_STATE__);
+                    if (window.__NEXT_DATA__) return JSON.stringify(window.__NEXT_DATA__);
 
-                    // 2. INITIAL_STATE
-                    const init = window.__INITIAL_STATE__;
-                    if (init) {
-                        const photo = init.photo || init.video;
-                        if (photo && (photo.id === vid || photo.photoId === vid)) {
-                            const url = photo.photoUrl || photo.playUrl || photo.videoUrl || '';
-                            if (url) return JSON.stringify({video_url: url, title: photo.caption || ''});
-                        }
-                    }
-
-                    // 3. NEXT_DATA
-                    const next = window.__NEXT_DATA__;
-                    if (next && next.props) {
-                        const pp = next.props.pageProps || {};
-                        const photo = pp.photo || pp.video;
-                        if (photo && (photo.id === vid || photo.photoId === vid)) {
-                            const url = photo.photoUrl || photo.playUrl || photo.videoUrl || '';
-                            if (url) return JSON.stringify({video_url: url, title: photo.caption || ''});
-                        }
-                    }
-
-                    // 4. Fallback: find video element
+                    // Try to find video element
                     const video = document.querySelector('video');
-                    if (video && video.src) return JSON.stringify({video_url: video.src, title: document.title});
-                    const source = document.querySelector('video source');
-                    if (source && source.src) return JSON.stringify({video_url: source.src, title: document.title});
+                    if (video) {
+                        const src = video.src || video.querySelector('source')?.src || '';
+                        if (src) return JSON.stringify({video_src: src});
+                    }
+
+                    // Try to find video URL in page source
+                    const scripts = document.querySelectorAll('script');
+                    for (const script of scripts) {
+                        const text = script.textContent;
+                        if (text.includes('playUrl') || text.includes('videoUrl')) {
+                            const match = text.match(/"(https?:[^"]+\.mp4[^"]*)"/);
+                            if (match) return JSON.stringify({video_src: match[1]});
+                        }
+                    }
 
                     return null;
                 } catch(e) { return null; }
             }
-        """, video_id)
-
+        """)
         if data:
             parsed = json.loads(data)
-            if parsed.get('video_url'):
-                print(f"[kuaishou] Matched video {video_id} from page state", file=sys.stderr)
+            video_url = parsed.get('video_src', '')
+
+            # Try to extract from Apollo state
+            if not video_url and isinstance(parsed, dict):
+                for key, value in parsed.items():
+                    if isinstance(value, dict):
+                        play_url = value.get('playUrl') or value.get('videoUrl') or value.get('photo', {}).get('playUrl', '')
+                        if play_url and play_url.startswith('http'):
+                            video_url = play_url
+                            break
+
+            if video_url:
                 return {
-                    'title': parsed.get('title', '') or 'Untitled',
+                    'title': page.title() or 'Untitled',
                     'author': '',
-                    'video_url': parsed['video_url'],
+                    'video_url': video_url,
                     'duration': 0,
                     'thumbnail': '',
                     'platform': '快手',
@@ -282,7 +254,7 @@ def extract_kuaishou(page, url):
     except Exception as e:
         print(f"[kuaishou] JS extraction failed: {e}", file=sys.stderr)
 
-    # Method 2: Network interception (fallback)
+    # Method 2: Network interception
     try:
         video_urls = []
         def handle_response(response):
@@ -302,23 +274,6 @@ def extract_kuaishou(page, url):
 
         for data in video_urls:
             if isinstance(data, dict):
-                # Try to match by video ID in the response data
-                for key, value in (data.items() if isinstance(data, dict) else []):
-                    if isinstance(value, dict):
-                        photo = value.get('photo', value)
-                        if photo.get('id') == video_id or photo.get('photoId') == video_id:
-                            play_url = photo.get('photoUrl') or photo.get('playUrl') or photo.get('videoUrl', '')
-                            if play_url:
-                                return {
-                                    'title': photo.get('caption', '') or 'Untitled',
-                                    'author': '',
-                                    'video_url': play_url,
-                                    'duration': 0,
-                                    'thumbnail': '',
-                                    'platform': '快手',
-                                }
-
-                # No ID match, take first result (less reliable)
                 play_url = data.get('playUrl') or data.get('videoUrl', '')
                 if play_url:
                     return {

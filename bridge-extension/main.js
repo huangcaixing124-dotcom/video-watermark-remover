@@ -146,10 +146,48 @@ function checkVideo() {
   }
 }
 
+// 尝试直接调快手 GraphQL API 获取视频 URL
+async function tryKuaishouGraphQL() {
+  // 从当前页面 URL 提取真实视频 ID
+  const vidMatch = location.href.match(/short-video\/([a-zA-Z0-9]+)/);
+  if (!vidMatch) {
+    console.log('[Bridge] No real video ID in Kuaishou URL');
+    return;
+  }
+  const photoId = vidMatch[1];
+  console.log('[Bridge] Kuaishou real video ID:', photoId);
+
+  try {
+    const gql = await fetch('https://www.kuaishou.com/graphql', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'Referer': location.href},
+      body: JSON.stringify({
+        variables: { photoId },
+        query: 'query mistralVideo($photoId: String) { visionVideoDetail(photoId: $photoId) { status photo { id photoUrl coverUrl caption } } }'
+      })
+    });
+    const data = await gql.json();
+    console.log('[Bridge] Kuaishou GQL response:', JSON.stringify(data).substring(0, 300));
+    const photo = data?.data?.visionVideoDetail?.photo;
+    if (photo?.photoUrl) {
+      console.log('[Bridge] Got Kuaishou video URL:', photo.photoUrl.substring(0, 80));
+      const cleanUrl = photo.photoUrl.replace(/lr=[^&]+/g, 'lr=video_gen_no_watermark');
+      window.postMessage({ type: 'BRIDGE_VIDEO_URL', url: cleanUrl, title: photo.caption || document.title || '' }, '*');
+    } else {
+      console.log('[Bridge] Kuaishou GQL returned no photoUrl (status:', data?.data?.visionVideoDetail?.status, ')');
+    }
+  } catch (e) {
+    console.log('[Bridge] Kuaishou GQL error:', e.message);
+  }
+}
+
 // Run checks
 setTimeout(checkVideo, 2000);
 setTimeout(checkVideo, 5000);
 setTimeout(checkVideo, 10000);
+
+// Try Kuaishou GraphQL API after a delay
+setTimeout(tryKuaishouGraphQL, 3000);
 
 // Try get_download_info API after a delay
 setTimeout(tryGetDownloadInfo, 3000);

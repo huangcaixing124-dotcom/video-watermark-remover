@@ -31,14 +31,19 @@ async function pollForTasks() {
         taskTabs[data.taskId] = tab.id;
       });
 
-      // 30秒超时自动关闭标签页
+      // 25秒超时自动关闭标签页，如果还没结果则标记失败
       setTimeout(() => {
         const tabId = taskTabs[data.taskId];
         if (tabId) {
           chrome.tabs.remove(tabId, () => {});
           delete taskTabs[data.taskId];
         }
-      }, 30000);
+        // 如果任务还没完成，标记失败
+        if (data.taskId in pendingTasks) {
+          console.log('[Bridge] Task timeout, marking as failed');
+          reportTaskError(data.taskId, '解析超时，请先在 Edge 中打开 kuaishou.com 并确保能正常看到视频，然后重试');
+        }
+      }, 25000);
 
       if (processedTasks.size > 100) {
         const toDelete = Array.from(processedTasks).slice(0, 50);
@@ -48,9 +53,22 @@ async function pollForTasks() {
   } catch (e) {}
 }
 
+// 从 URL 中提取视频 ID（支持短链接和真实链接）
+function extractKuaishouVideoId(url) {
+  // 真实链接: /short-video/3xbaetrjq3zpr5i
+  let m = url.match(/kuaishou\.com\/short-video\/([a-zA-Z0-9]+)/);
+  if (m) return m[1];
+  // 短链接: v.kuaishou.com/nLwjQbfX
+  m = url.match(/\/\/([^.]+)\.kuaishou\.com\/([a-zA-Z0-9]+)/);
+  if (m) return m[2];
+  // 其他格式: /photo/xxx
+  m = url.match(/kuaishou\.com\/(?:photo\/)?([a-zA-Z0-9]+)/);
+  if (m) return m[1];
+  return null;
+}
+
 // 尝试用存储的 cookies 直接调快手 API，返回 true=成功
 async function tryDirectKuaishouApi(url, taskId) {
-  // 从 storage 读取之前保存的 cookies
   const result = await chrome.storage.local.get('kuaishouCookies');
   const cookieStr = result.kuaishouCookies;
   if (!cookieStr) {
@@ -58,7 +76,7 @@ async function tryDirectKuaishouApi(url, taskId) {
     return false;
   }
 
-  const videoId = url.match(/kuaishou\.com\/(?:short-video\/)?([a-zA-Z0-9]+)/)?.[1];
+  const videoId = extractKuaishouVideoId(url);
   if (!videoId) return false;
 
   console.log('[Bridge] Trying API with stored cookies, length:', cookieStr.length);
@@ -171,6 +189,18 @@ async function tryDirectKuaishouApiWithCookies(videoId, cookieStr) {
   } catch(e) {
     console.log('[Bridge] API with page cookies error:', e.message);
   }
+}
+
+// 报告任务失败
+async function reportTaskError(taskId, errorMsg) {
+  console.log('[Bridge] Reporting error:', errorMsg);
+  try {
+    await fetch(`${SERVER}/api/video/bridge/result`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ taskId, videoUrl: null, error: errorMsg })
+    });
+  } catch (e) {}
+  delete pendingTasks[taskId];
 }
 
 async function completeTask(taskId, videoUrl) {
