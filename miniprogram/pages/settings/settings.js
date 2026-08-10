@@ -1,13 +1,12 @@
 // pages/settings/settings.js
 Page({
-  data: { isDark: false, apiBase: '', saving: false, connected: false, usingBackup: false, darkMode: 'auto', historyCount: 0 },
+  data: { isDark: false, apiBase: '', saving: false, connected: false, darkMode: 'auto', historyCount: 0 },
 
   onLoad() {
     const app = getApp();
     this.setData({
       apiBase: app.globalData.apiBase || 'https://api.hcxserver.xyz',
       connected: app.globalData.connected,
-      usingBackup: app.globalData.usingBackup || false,
       isDark: app.globalData.isDark,
       darkMode: app.globalData.darkMode || 'auto',
       historyCount: (app.globalData.downloadHistory || []).length,
@@ -34,18 +33,18 @@ Page({
   },
 
   onThemeChange(d) { this.setData({ isDark: d }); },
-  onConnectionChange(c, usingBackup = false) { this.setData({ connected: c, usingBackup }); },
+  onConnectionChange(c) { this.setData({ connected: c }); },
 
   onApiBaseInput(e) { this.setData({ apiBase: e.detail.value }); },
 
   async saveApiBase() {
-    const apiBase = this.data.apiBase.trim().replace(/\/+$/, '');
+    const apiBase = this.data.apiBase.trim();
     if (!apiBase) return wx.showToast({ title: '请输入服务器地址', icon: 'none' });
     this.setData({ saving: true });
     const app = getApp();
     app.setApiBase(apiBase);
     await new Promise(r => setTimeout(r, 1000));
-    this.setData({ saving: false, connected: app.globalData.connected, usingBackup: app.globalData.usingBackup || false });
+    this.setData({ saving: false, connected: app.globalData.connected });
     wx.showToast({ title: app.globalData.connected ? '保存成功' : '保存成功，但连接失败', icon: app.globalData.connected ? 'success' : 'none' });
   },
 

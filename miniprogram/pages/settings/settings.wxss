@@ -8,7 +8,6 @@
 
 .status-badge { font-size: 22rpx; font-weight: 500; padding: 6rpx 16rpx; border-radius: 8rpx; flex-shrink: 0; }
 .status-badge.connected { background: #dcfce7; color: #16a34a; }
-.status-badge.backup { background: #fef9c3; color: #ca8a04; }
 .status-badge.disconnected { background: #fef2f2; color: #dc2626; }
 
 .theme-options { display: flex; gap: 16rpx; }
