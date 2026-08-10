@@ -3,10 +3,9 @@
  */
 const app = getApp();
 
-function request(method, url, data = {}) {
+/** 实际发起一次 wx.request，返回 Promise */
+function _rawRequest(apiBase, method, url, data, isGet) {
   return new Promise((resolve, reject) => {
-    const apiBase = app.globalData.apiBase || 'http://localhost:8800';
-    const isGet = method === 'GET';
     wx.request({
       url: `${apiBase}${url}`,
       method,
@@ -19,6 +18,29 @@ function request(method, url, data = {}) {
         else reject(new Error(res.data?.error || `HTTP ${res.statusCode}`));
       },
       fail: () => reject(new Error('网络请求失败，请检查服务器地址')),
+    });
+  });
+}
+
+/**
+ * 带故障转移的请求：
+ * 1. 用当前服务器地址请求
+ * 2. 网络失败时，重新探测主/备服务器
+ * 3. 若探测到不同地址，自动切换并重试一次
+ */
+function request(method, url, data = {}) {
+  const apiBase = app.globalData.apiBase || 'https://api.hcxserver.xyz';
+  const isGet = method === 'GET';
+
+  return _rawRequest(apiBase, method, url, data, isGet).catch((err) => {
+    // 网络层失败（超时/断网）才触发故障转移；HTTP 错误不切换
+    if (err.message !== '网络请求失败，请检查服务器地址') throw err;
+
+    // 重新探测主备服务器
+    return app.resolveServer().then(({ ok, url: newBase }) => {
+      if (!ok || newBase === apiBase) throw err;
+      console.log(`[api] Failover to ${newBase} for ${url}`);
+      return _rawRequest(newBase, method, url, data, isGet);
     });
   });
 }

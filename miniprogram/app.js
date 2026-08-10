@@ -27,53 +27,72 @@ App({
    * 3. 切换后通知所有页面
    */
   checkConnection(url) {
-    // 如果用户手动设置的地址不是主/备地址，直接用用户设置的
+    this.resolveServer(url).then(({ ok }) => {
+      if (!ok) this._notifyPages('onConnectionChange', false, false);
+    });
+  },
+
+  /**
+   * 解析当前可用的服务器地址（支持故障转移）。
+   * 返回 Promise<{ ok, url, usingBackup }>
+   * 每次请求失败时调用，用于运行中自动切换。
+   */
+  resolveServer(preferredUrl) {
+    const url = preferredUrl || this.globalData.apiBase || PRIMARY_URL;
+
+    // 用户手动设置的地址不是主/备地址 → 只测这个
     if (url !== PRIMARY_URL && url !== BACKUP_URL) {
-      this._testUrl(url, (ok) => {
+      return this._testUrl(url).then(ok => {
         this.globalData.connected = ok;
         this.globalData.usingBackup = false;
         this._notifyPages('onConnectionChange', ok, false);
+        return { ok, url, usingBackup: false };
       });
-      return;
     }
 
     // 先试主服务器
-    this._testUrl(PRIMARY_URL, (primaryOk) => {
+    return this._testUrl(PRIMARY_URL).then(primaryOk => {
       if (primaryOk) {
-        this.globalData.apiBase = PRIMARY_URL;
-        this.globalData.connected = true;
-        this.globalData.usingBackup = false;
-        if (url !== PRIMARY_URL) wx.setStorageSync('api_base', PRIMARY_URL);
-        this._notifyPages('onConnectionChange', true, false);
-        return;
+        this._setServer(PRIMARY_URL, false);
+        return { ok: true, url: PRIMARY_URL, usingBackup: false };
       }
 
       // 主服务器不通，尝试备用服务器
-      this._testUrl(BACKUP_URL, (backupOk) => {
+      return this._testUrl(BACKUP_URL).then(backupOk => {
         if (backupOk) {
-          this.globalData.apiBase = BACKUP_URL;
-          this.globalData.connected = true;
-          this.globalData.usingBackup = true;
-          wx.setStorageSync('api_base', BACKUP_URL);
-          this._notifyPages('onConnectionChange', true, true);
+          this._setServer(BACKUP_URL, true);
           console.log('[failover] Switched to backup server');
-        } else {
-          this.globalData.connected = false;
-          this.globalData.usingBackup = false;
-          this._notifyPages('onConnectionChange', false, false);
+          return { ok: true, url: BACKUP_URL, usingBackup: true };
         }
+        this._setServer(null, false);
+        return { ok: false, url: null, usingBackup: false };
       });
     });
   },
 
-  /** 测试单个 URL 是否可达 */
-  _testUrl(url, callback) {
-    wx.request({
-      url: `${url}/api/health`,
-      method: 'GET',
-      timeout: 5000,
-      success: () => callback(true),
-      fail: () => callback(false),
+  /** 设置当前服务器并持久化 */
+  _setServer(url, usingBackup) {
+    this.globalData.connected = !!url;
+    this.globalData.usingBackup = usingBackup;
+    if (url) {
+      this.globalData.apiBase = url;
+      wx.setStorageSync('api_base', url);
+      this._notifyPages('onConnectionChange', true, usingBackup);
+    } else {
+      this._notifyPages('onConnectionChange', false, false);
+    }
+  },
+
+  /** 测试单个 URL 是否可达，返回 Promise<boolean> */
+  _testUrl(url) {
+    return new Promise(resolve => {
+      wx.request({
+        url: `${url}/api/health`,
+        method: 'GET',
+        timeout: 5000,
+        success: () => resolve(true),
+        fail: () => resolve(false),
+      });
     });
   },
 
