@@ -3,9 +3,10 @@
  */
 const crypto = require('crypto');
 
-/** Generate a short unique ID. */
+/** Generate a short unique ID with server prefix for Worker routing. */
 function generateId() {
-  return crypto.randomBytes(6).toString('hex');
+  const serverId = process.env.SERVER_ID || '0';
+  return serverId + crypto.randomBytes(6).toString('hex');
 }
 
 /** Format duration from seconds to mm:ss. */

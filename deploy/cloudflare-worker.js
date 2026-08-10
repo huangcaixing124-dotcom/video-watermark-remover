@@ -84,6 +84,17 @@ async function selectBackend(request, url) {
     return SERVERS[online[0]];              // Windows 不在线 → 走其他（降级）
   }
 
+  // 任务 ID 前缀路由：任务 ID 以 "0" 开头 → Windows，以 "1" 开头 → MacBook
+  // 服务器端的 generateId() 会 prepend SERVER_ID（0或1）
+  if (hashKey === 'task-id') {
+    const taskId = await extractTaskId(request, url);
+    if (taskId) {
+      const idx = taskId.startsWith('0') ? 0 : taskId.startsWith('1') ? 1 : -1;
+      if (idx >= 0 && results[idx]) return SERVERS[idx];
+      if (idx >= 0) return SERVERS[online[0]]; // 目标服务器不在线，用其他在线
+    }
+  }
+
   const hash = hashCode(hashKey);
   return SERVERS[online[hash % online.length]];
 }
@@ -104,9 +115,16 @@ async function extractHashKey(request, url) {
   }
 
   const taskMatch = path.match(/\/api\/video\/(?:task|file)\/(.+)/);
-  if (taskMatch) return taskMatch[1];
+  if (taskMatch) return 'task-id';
 
   return path + url.search;
+}
+
+/** 从 task/file 请求中提取任务 ID */
+async function extractTaskId(request, url) {
+  const match = url.pathname.match(/\/api\/video\/(?:task|file)\/(.+)/);
+  if (match) return match[1];
+  return null;
 }
 
 function hashCode(str) {
