@@ -1,7 +1,10 @@
 // app.js
+const PRIMARY_URL = 'https://api.hcxserver.xyz';
+const BACKUP_URL = 'https://api-backup.hcxserver.xyz';
+
 App({
   onLaunch() {
-    const apiBase = wx.getStorageSync('api_base') || 'https://api.hcxserver.xyz';
+    const apiBase = wx.getStorageSync('api_base') || PRIMARY_URL;
     const darkMode = wx.getStorageSync('dark_mode') ?? 'auto';
     this.globalData.apiBase = apiBase;
     this.globalData.darkMode = darkMode;
@@ -12,23 +15,65 @@ App({
 
   setApiBase(url) {
     this.globalData.apiBase = url;
+    this.globalData.usingBackup = false;
     wx.setStorageSync('api_base', url);
     this.checkConnection(url);
   },
 
+  /**
+   * 检查连接，支持自动故障转移：
+   * 1. 先尝试主服务器 (api.hcxserver.xyz)
+   * 2. 如果主服务器不通，自动切换到备用服务器 (api-backup.hcxserver.xyz)
+   * 3. 切换后通知所有页面
+   */
   checkConnection(url) {
+    // 如果用户手动设置的地址不是主/备地址，直接用用户设置的
+    if (url !== PRIMARY_URL && url !== BACKUP_URL) {
+      this._testUrl(url, (ok) => {
+        this.globalData.connected = ok;
+        this.globalData.usingBackup = false;
+        this._notifyPages('onConnectionChange', ok, false);
+      });
+      return;
+    }
+
+    // 先试主服务器
+    this._testUrl(PRIMARY_URL, (primaryOk) => {
+      if (primaryOk) {
+        this.globalData.apiBase = PRIMARY_URL;
+        this.globalData.connected = true;
+        this.globalData.usingBackup = false;
+        if (url !== PRIMARY_URL) wx.setStorageSync('api_base', PRIMARY_URL);
+        this._notifyPages('onConnectionChange', true, false);
+        return;
+      }
+
+      // 主服务器不通，尝试备用服务器
+      this._testUrl(BACKUP_URL, (backupOk) => {
+        if (backupOk) {
+          this.globalData.apiBase = BACKUP_URL;
+          this.globalData.connected = true;
+          this.globalData.usingBackup = true;
+          wx.setStorageSync('api_base', BACKUP_URL);
+          this._notifyPages('onConnectionChange', true, true);
+          console.log('[failover] Switched to backup server');
+        } else {
+          this.globalData.connected = false;
+          this.globalData.usingBackup = false;
+          this._notifyPages('onConnectionChange', false, false);
+        }
+      });
+    });
+  },
+
+  /** 测试单个 URL 是否可达 */
+  _testUrl(url, callback) {
     wx.request({
       url: `${url}/api/health`,
       method: 'GET',
       timeout: 5000,
-      success: () => {
-        this.globalData.connected = true;
-        this._notifyPages('onConnectionChange', true);
-      },
-      fail: () => {
-        this.globalData.connected = false;
-        this._notifyPages('onConnectionChange', false);
-      },
+      success: () => callback(true),
+      fail: () => callback(false),
     });
   },
 
@@ -89,8 +134,9 @@ App({
   },
 
   globalData: {
-    apiBase: 'https://api.hcxserver.xyz',
+    apiBase: PRIMARY_URL,
     connected: false,
+    usingBackup: false,
     isDark: false,
     darkMode: 'auto',
     downloadHistory: [],

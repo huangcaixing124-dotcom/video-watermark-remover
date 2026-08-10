@@ -16,9 +16,11 @@
     <view class="setting-item" style="border:none">
       <view class="setting-item-left">
         <text class="setting-item-label">连接状态</text>
-        <text class="setting-item-desc">{{connected ? '服务正常运行' : '请检查服务器地址'}}</text>
+        <text class="setting-item-desc">
+          {{connected ? (usingBackup ? '备用服务器运行中' : '主服务器运行中') : '请检查服务器地址'}}
+        </text>
       </view>
-      <view class="status-badge {{connected ? 'connected' : 'disconnected'}}">{{connected ? '已连接' : '未连接'}}</view>
+      <view class="status-badge {{connected ? (usingBackup ? 'backup' : 'connected') : 'disconnected'}}">{{connected ? (usingBackup ? '备用' : '已连接') : '未连接'}}</view>
     </view>
   </view>
 
