@@ -1,23 +1,28 @@
 /**
  * 去水印视频工具 - 自动负载均衡 + 故障转移 Worker
  *
- * 两台服务器都开着时：基于 URL 哈希分配
+ * 两台服务器都开着时：基于视频 URL 哈希分配
  * 一台挂了时：自动故障转移
- * 每次请求实时探测，无缓存，避免多实例不一致
+ * 每次请求实时探测，无缓存
+ *
+ * 注意：视频 API 请求（/api/video/*）是有状态的，
+ * 同一任务的所有请求必须路由到同一台服务器。
+ * 使用请求体中的视频 URL 作为哈希键，而非 API 路径。
  */
 const SERVERS = [
   { name: 'Windows', url: 'https://main.api.hcxserver.xyz' },
   { name: 'MacBook', url: 'https://api-backup.hcxserver.xyz' },
 ];
 
-const TIMEOUT = 15000; // 转发超时 15 秒
+const TIMEOUT = 15000;
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const path = url.pathname;
 
     // 健康检查
-    if (url.pathname === '/api/health') {
+    if (path === '/api/health') {
       const status = {};
       for (const s of SERVERS) {
         status[s.name] = await probe(s.url + '/api/health') ? 'online' : 'offline';
@@ -26,8 +31,8 @@ export default {
         { headers: { 'Content-Type': 'application/json' } });
     }
 
-    // 选择后端（实时探测，无缓存）
-    const backend = await selectBackend(url);
+    // 选择后端服务器
+    const backend = await selectBackend(request, url);
     if (!backend) {
       return new Response(JSON.stringify({ error: '所有服务器均不可用' }), {
         status: 503, headers: { 'Content-Type': 'application/json' },
@@ -35,7 +40,7 @@ export default {
     }
 
     // 转发请求
-    const target = backend.url + url.pathname + url.search;
+    const target = backend.url + path + url.search;
     try {
       const resp = await fetch(target, {
         method: request.method,
@@ -43,19 +48,16 @@ export default {
         body: request.method === 'GET' || request.method === 'HEAD' ? null : request.body,
         timeout: TIMEOUT,
       });
-      return new Response(resp.body, {
-        status: resp.status, statusText: resp.statusText, headers: resp.headers,
-      });
+      return new Response(resp.body, { status: resp.status, headers: resp.headers });
     } catch (err) {
-      // 当前后端失败，尝试另一个
       const fallback = SERVERS.find(s => s.url !== backend.url);
-      if (!fallback) return new Response(JSON.stringify({ error: '转发失败，无可用备用' }), {
-        status: 502, headers: { 'Content-Type': 'application/json' },
-      });
-
+      if (!fallback) {
+        return new Response(JSON.stringify({ error: '转发失败，无可用备用' }), {
+          status: 502, headers: { 'Content-Type': 'application/json' },
+        });
+      }
       try {
-        const fallbackTarget = fallback.url + url.pathname + url.search;
-        const resp = await fetch(fallbackTarget, {
+        const resp = await fetch(fallback.url + path + url.search, {
           method: request.method, headers: request.headers,
           body: request.method === 'GET' || request.method === 'HEAD' ? null : request.body,
           timeout: TIMEOUT,
@@ -70,24 +72,54 @@ export default {
   },
 };
 
-async function selectBackend(url) {
-  // 并行探测所有服务器
+/**
+ * 选择后端服务器。
+ * 关键规则：同一任务的所有请求必须路由到同一台服务器。
+ *
+ * 策略：
+ * 1. 对于 /api/video/info（POST），从请求体提取视频 URL，用 URL 哈希分配
+ * 2. 对于 /api/video/task/xxx 和 /api/video/file/xxx（GET），复用任务 ID 哈希
+ * 3. 以上规则确保同一视频的所有请求走同一台服务器
+ * 4. 其他请求按路径哈希分配
+ */
+async function selectBackend(request, url) {
   const results = await Promise.all(SERVERS.map(s => probe(s.url + '/api/health')));
   const online = SERVERS.map((s, i) => results[i] ? i : -1).filter(i => i >= 0);
 
   if (online.length === 0) return null;
   if (online.length === 1) return SERVERS[online[0]];
 
-  // 多台在线 → URL 哈希分配
-  const hash = hashCode(url.pathname + url.search);
+  // 多台在线，根据请求内容选择服务器
+  const hashKey = await extractHashKey(request, url);
+  const hash = hashCode(hashKey);
   return SERVERS[online[hash % online.length]];
+}
+
+/** 提取用于哈希分配的键值，确保同一任务路由到同一台服务器 */
+async function extractHashKey(request, url) {
+  const path = url.pathname;
+
+  // POST /api/video/info → 从请求体提取视频 URL
+  if (path === '/api/video/info' && request.method === 'POST') {
+    try {
+      const body = await request.clone().json();
+      if (body.url) return body.url;
+    } catch {}
+  }
+
+  // GET /api/video/task/xxx 或 /api/video/file/xxx → 用任务 ID
+  // 任务 ID 是创建任务时由服务器生成的，同一任务 ID 总是路由到同一台服务器
+  const taskMatch = path.match(/\/api\/video\/(?:task|file)\/(.+)/);
+  if (taskMatch) return taskMatch[1];
+
+  // 其他请求 → 用路径
+  return path + url.search;
 }
 
 function hashCode(str) {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
-    hash |= 0;
+    hash = ((hash << 5) - hash) + str.charCodeAt(i); hash |= 0;
   }
   return Math.abs(hash);
 }

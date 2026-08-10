@@ -197,39 +197,49 @@ Page({
 
       const downloadTask = wx.downloadFile({
         url,
-        // 不用 timeout 参数，让下载自然完成不限时
         success: (res) => {
           if (res.statusCode === 200) {
             this._precachePath = res.tempFilePath;
+            this._precacheDone = true;
+            this._cachingInProgress = false;
+            this.setData({
+              progress: 100,
+              statusText: '下载完成！',
+              statusHint: '点击下方按钮保存到相册',
+              downloading: false,
+              saving: false,
+            });
+          } else {
+            // 服务器返回非200（如404），文件不可用
+            this._precacheDone = true;
+            this._cachingInProgress = false;
+            this.setData({
+              progress: 0,
+              statusText: '文件不可用',
+              statusHint: '服务器文件已过期，请重新解析',
+              downloading: false,
+              saving: false,
+              error: '视频文件已过期，请重新解析下载',
+            });
           }
-          this._precacheDone = true;
-          this._cachingInProgress = false;
-          this.setData({
-            progress: 100,
-            statusText: '下载完成！',
-            statusHint: '点击下方按钮保存到相册',
-            downloading: false,
-            saving: false,
-          });
           resolve();
         },
         fail: (err) => {
           console.error('[cache] 下载到手机失败:', err);
           this._precacheDone = true;
           this._cachingInProgress = false;
-          // 设置 progress 到 100 让保存按钮显示（用户可点击重新下载）
           this.setData({
-            progress: 100,
-            statusText: '传输失败',
-            statusHint: '点击保存到相册将重新下载',
+            progress: 0,
+            statusText: '下载失败',
+            statusHint: '请检查网络后重试',
             downloading: false,
             saving: false,
+            error: '下载到手机失败，请检查网络后重试',
           });
           resolve();
         },
       });
 
-      // 实时更新传输进度（80-100% 表示传输到手机阶段）
       downloadTask.onProgressUpdate((res) => {
         this.setData({ progress: 80 + Math.floor(res.progress * 0.2) });
       });
@@ -280,13 +290,22 @@ Page({
         url: `${getApp().globalData.apiBase}/api/video/file/${this.data.taskId}`,
         success: ok, fail,
       }));
-      if (temp.statusCode !== 200) throw new Error(`HTTP ${temp.statusCode}`);
+      if (temp.statusCode !== 200) {
+        console.error('[save] 文件下载失败, HTTP:', temp.statusCode);
+        wx.showToast({ title: '视频文件已过期，请重新解析下载', icon: 'none' });
+        return;
+      }
       await wx.saveVideoToPhotosAlbum({ tempFilePath: temp.tempFilePath });
       wx.showToast({ title: '已保存到相册', icon: 'success' });
       setTimeout(() => this.resetAll(), 500);
     } catch (err) {
       console.error('[save] error:', err);
-      wx.showToast({ title: '保存失败，请重试', icon: 'none' });
+      // 区分 404 和其他错误，给出更明确的提示
+      if (err.message && err.message.includes('404')) {
+        wx.showToast({ title: '视频文件已过期，请重新解析', icon: 'none' });
+      } else {
+        wx.showToast({ title: '保存失败，请重试', icon: 'none' });
+      }
     } finally {
       this.setData({ saving: false });
     }
