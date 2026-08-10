@@ -5,9 +5,10 @@
  * 一台挂了时：自动故障转移
  * 每次请求实时探测，无缓存
  *
- * 注意：视频 API 请求（/api/video/*）是有状态的，
- * 同一任务的所有请求必须路由到同一台服务器。
- * 使用请求体中的视频 URL 作为哈希键，而非 API 路径。
+ * 注意：
+ * - 视频 API 请求（/api/video/*）是有状态的，同一任务必须路由到同一台服务器
+ * - 快手/豆包依赖桥接扩展（仅 Windows 有），强制路由到 Windows
+ * - 其他平台（YouTube、B站等）正常负载均衡
  */
 const SERVERS = [
   { name: 'Windows', url: 'https://main.api.hcxserver.xyz' },
@@ -21,7 +22,6 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // 健康检查
     if (path === '/api/health') {
       const status = {};
       for (const s of SERVERS) {
@@ -31,7 +31,6 @@ export default {
         { headers: { 'Content-Type': 'application/json' } });
     }
 
-    // 选择后端服务器
     const backend = await selectBackend(request, url);
     if (!backend) {
       return new Response(JSON.stringify({ error: '所有服务器均不可用' }), {
@@ -39,12 +38,10 @@ export default {
       });
     }
 
-    // 转发请求
     const target = backend.url + path + url.search;
     try {
       const resp = await fetch(target, {
-        method: request.method,
-        headers: request.headers,
+        method: request.method, headers: request.headers,
         body: request.method === 'GET' || request.method === 'HEAD' ? null : request.body,
         timeout: TIMEOUT,
       });
@@ -72,16 +69,6 @@ export default {
   },
 };
 
-/**
- * 选择后端服务器。
- * 关键规则：同一任务的所有请求必须路由到同一台服务器。
- *
- * 策略：
- * 1. 对于 /api/video/info（POST），从请求体提取视频 URL，用 URL 哈希分配
- * 2. 对于 /api/video/task/xxx 和 /api/video/file/xxx（GET），复用任务 ID 哈希
- * 3. 以上规则确保同一视频的所有请求走同一台服务器
- * 4. 其他请求按路径哈希分配
- */
 async function selectBackend(request, url) {
   const results = await Promise.all(SERVERS.map(s => probe(s.url + '/api/health')));
   const online = SERVERS.map((s, i) => results[i] ? i : -1).filter(i => i >= 0);
@@ -89,30 +76,36 @@ async function selectBackend(request, url) {
   if (online.length === 0) return null;
   if (online.length === 1) return SERVERS[online[0]];
 
-  // 多台在线，根据请求内容选择服务器
   const hashKey = await extractHashKey(request, url);
+
+  // 快手/豆包强制走 Windows（桥接扩展仅 Windows 有）
+  if (hashKey === 'bridge-required') {
+    if (results[0]) return SERVERS[0];     // Windows 在线 → 走 Windows
+    return SERVERS[online[0]];              // Windows 不在线 → 走其他（降级）
+  }
+
   const hash = hashCode(hashKey);
   return SERVERS[online[hash % online.length]];
 }
 
-/** 提取用于哈希分配的键值，确保同一任务路由到同一台服务器 */
 async function extractHashKey(request, url) {
   const path = url.pathname;
 
-  // POST /api/video/info → 从请求体提取视频 URL
   if (path === '/api/video/info' && request.method === 'POST') {
     try {
       const body = await request.clone().json();
-      if (body.url) return body.url;
+      if (body.url) {
+        if (body.url.includes('kuaishou.com') || body.url.includes('doubao.com') || body.url.includes('gifshow.com')) {
+          return 'bridge-required';
+        }
+        return body.url;
+      }
     } catch {}
   }
 
-  // GET /api/video/task/xxx 或 /api/video/file/xxx → 用任务 ID
-  // 任务 ID 是创建任务时由服务器生成的，同一任务 ID 总是路由到同一台服务器
   const taskMatch = path.match(/\/api\/video\/(?:task|file)\/(.+)/);
   if (taskMatch) return taskMatch[1];
 
-  // 其他请求 → 用路径
   return path + url.search;
 }
 
