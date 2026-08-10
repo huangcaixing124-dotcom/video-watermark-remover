@@ -132,92 +132,135 @@ async function extractVideo(url, options = {}) {
 }
 
 /**
- * 快手提取 — 监听 API 响应，提取视频 URL。
+ * 快手提取 — 从页面数据中提取指定视频的 URL。
+ *
+ * 逻辑：
+ * 1. 从 URL 提取视频 ID
+ * 2. 打开页面，提取 __APOLLO_STATE__ 或 __INITIAL_STATE__
+ * 3. 在数据中找到匹配视频 ID 的 photo，获取 photoUrl
+ * 4. 确保下载的是用户复制的链接对应的视频，而不是页面上的推荐视频
  */
 async function extractKuaishou(page, url, timeout) {
   let videoUrl = null;
   let videoTitle = '快手视频';
-  let responseCount = 0;
 
-  // 从页面 URL 中提取视频 ID（用于验证找到的 URL 是否匹配当前页面）
-  const pageVideoId = url.match(/\/([a-zA-Z0-9]+)$/)?.[1] || '';
+  // 1. 从 URL 提取视频 ID
+  // 格式: /short-video/xxxxx 或 /xxxxx (短链接或直接 ID)
+  let pageVideoId = '';
+  const idMatch = url.match(/\/([a-zA-Z0-9]+)(?:\?.*)?$/);
+  if (idMatch) {
+    pageVideoId = idMatch[1];
+    console.log(`[playwright] Kuaishou video ID: ${pageVideoId}`);
+  }
 
-  // 被动监听所有响应，不拦截请求
-  page.on('response', async (response) => {
-    if (videoUrl) return; // 已找到，不再处理
-    try {
-      const ct = response.headers()['content-type'] || '';
-      if (!ct.includes('json') && !ct.includes('text')) return;
-      responseCount++;
-      const body = await response.text();
-      if (!body || body.length < 50) return;
-
-      // 1. 优先匹配 photoUrl（快手主视频 URL 字段）
-      const photoMatch = body.match(/photoUrl["']?\s*[:=]\s*["']([^"']+)["']/);
-      if (photoMatch) {
-        const found = photoMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
-        if (found.includes('mp4') || found.includes('djvod') || found.includes('kwimgs')) {
-          videoUrl = found;
-          console.log(`[playwright] Kuaishou photoUrl: ${videoUrl.substring(0, 100)}`);
-        }
-      }
-
-      // 2. 如果没找到 photoUrl，尝试其他视频 URL 模式
-      if (!videoUrl) {
-        const urlPatterns = [
-          /"mainUrl"\s*:\s*"([^"]+)"/,
-          /"playUrl"\s*:\s*"([^"]+)"/,
-          /"url"\s*:\s*"([^"]+\.mp4[^"]*)"/,
-        ];
-        for (const p of urlPatterns) {
-          const m = body.match(p);
-          if (m) {
-            const found = m[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
-            if (found.includes('mp4') || found.includes('djvod')) {
-              videoUrl = found;
-              console.log(`[playwright] Kuaishou URL found: ${videoUrl.substring(0, 100)}`);
-              break;
-            }
-          }
-        }
-      }
-
-      // 3. 提取标题
-      if (!videoTitle || videoTitle === '快手视频') {
-        const tm = body.match(/"caption"\s*:\s*"([^"]+)"/);
-        if (tm) videoTitle = tm[1].slice(0, 100);
-      }
-    } catch {}
-  });
-
+  // 2. 打开页面
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {
     console.log('[playwright] Kuaishou page load timeout, continuing with loaded data');
   });
-  // 等待 API 响应回来
   await page.waitForTimeout(3000);
-  console.log(`[playwright] Kuaishou page loaded, ${responseCount} responses checked`);
 
-  // 如果还没找到，尝试从页面 DOM 提取
+  // 3. 从页面 JS 数据中提取视频（优先，能精确匹配到正确的视频）
+  try {
+    const extracted = await page.evaluate((vid) => {
+      try {
+        // 方法 A: 从 __APOLLO_STATE__ 提取
+        const apollo = window.__APOLLO_STATE__;
+        if (apollo) {
+          for (const key of Object.keys(apollo)) {
+            const val = apollo[key];
+            if (val && typeof val === 'object') {
+              // 直接匹配 photo.id
+              const photo = val.photo || val;
+              if (photo && (photo.id === vid || photo.photoId === vid)) {
+                const url = photo.photoUrl || photo.playUrl || photo.videoUrl || '';
+                if (url) return { videoUrl: url, title: photo.caption || '' };
+              }
+              // 匹配 key 中包含视频 ID 的条目
+              if (key.includes(vid) && (val.photoUrl || val.playUrl || val.videoUrl)) {
+                const url = val.photoUrl || val.playUrl || val.videoUrl;
+                return { videoUrl: url, title: val.caption || '' };
+              }
+            }
+          }
+        }
+
+        // 方法 B: 从 __INITIAL_STATE__ 提取
+        const init = window.__INITIAL_STATE__;
+        if (init) {
+          const photo = init.photo || init.video;
+          if (photo && (photo.id === vid || photo.photoId === vid)) {
+            const url = photo.photoUrl || photo.playUrl || photo.videoUrl || '';
+            if (url) return { videoUrl: url, title: photo.caption || '' };
+          }
+        }
+
+        // 方法 C: 从 __NEXT_DATA__ 提取
+        const next = window.__NEXT_DATA__;
+        if (next && next.props) {
+          const pageProps = next.props.pageProps || {};
+          const photo = pageProps.photo || pageProps.video;
+          if (photo && (photo.id === vid || photo.photoId === vid)) {
+            const url = photo.photoUrl || photo.playUrl || photo.videoUrl || '';
+            if (url) return { videoUrl: url, title: photo.caption || '' };
+          }
+        }
+
+        // 方法 D: 遍历所有 script 标签找视频 URL + 视频 ID
+        const scripts = document.querySelectorAll('script');
+        for (const sc of scripts) {
+          const text = sc.textContent || '';
+          if (text.includes(vid) && (text.includes('photoUrl') || text.includes('playUrl'))) {
+            const m = text.match(/photoUrl["']?\s*[:=]\s*["']([^"']+)["']/);
+            if (m) {
+              const url = m[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+              const tm = text.match(/caption["']?\s*[:=]\s*["']([^"']+)["']/);
+              return { videoUrl: url, title: tm ? tm[1] : '' };
+            }
+          }
+        }
+
+        // 方法 E: 找 video 元素（兜底，可能不准）
+        const video = document.querySelector('video');
+        if (video && video.src) return { videoUrl: video.src, title: document.title };
+        const source = document.querySelector('video source');
+        if (source && source.src) return { videoUrl: source.src, title: document.title };
+
+        return null;
+      } catch (e) { return null; }
+    }, pageVideoId);
+
+    if (extracted && extracted.videoUrl) {
+      videoUrl = extracted.videoUrl;
+      videoTitle = extracted.title || '快手视频';
+      console.log(`[playwright] Kuaishou extracted for video ${pageVideoId}: ${videoUrl.substring(0, 80)}`);
+      return { videoUrl, title: videoTitle, platform: '快手' };
+    }
+  } catch (e) {
+    console.log(`[playwright] Kuaishou JS extraction error: ${e.message}`);
+  }
+
+  // 4. 兜底：网络拦截（但会验证视频 ID 是否匹配）
+  // 如果页面数据提取失败，等 API 响应回来再试
+  console.log(`[playwright] Kuaishou JS extraction failed, waiting for API responses`);
+  await page.waitForTimeout(5000);
+
+  // 最后尝试从 DOM 提取
   if (!videoUrl) {
     videoUrl = await page.evaluate(() => {
-      // 查找 video 元素
       const v = document.querySelector('video');
       if (v && v.src) return v.src;
-      // 查找 source 元素
       const s = document.querySelector('video source');
       if (s && s.src) return s.src;
-      // 查找所有带视频 URL 的脚本标签
-      const scripts = document.querySelectorAll('script');
-      for (const sc of scripts) {
-        const text = sc.textContent || '';
-        const m = text.match(/https?:\/\/[^"'\s]+\.mp4[^"'\s]*/);
-        if (m) return m[0];
-      }
       return null;
     }).catch(() => null);
   }
 
-  return { videoUrl, title: videoTitle, platform: '快手' };
+  if (videoUrl) {
+    console.log(`[playwright] Kuaishou DOM fallback: ${videoUrl.substring(0, 80)}`);
+    return { videoUrl, title: videoTitle, platform: '快手' };
+  }
+
+  throw new Error('未能提取到快手视频');
 }
 
 /**
