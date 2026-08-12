@@ -107,7 +107,7 @@ Page({
   },
 
   onUrlInput(e) { this.setData({ url: e.detail.value }); },
-  clearUrl() { this.resetAll(); },
+  clearUrl() { this._busy = false; this.resetAll(); },
 
   // ── 解析并下载（合并为一个操作）──
   async parseVideo() {
