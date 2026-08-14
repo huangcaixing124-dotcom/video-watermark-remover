@@ -131,6 +131,20 @@ async function extractVideo(url, options = {}) {
   }
 }
 
+/** 解码快手视频 URL 中的 Unicode 转义（\\u002F → /, \\u0026 → &）*/
+function decodeVideoUrl(url) {
+  if (!url) return '';
+  return url
+    .replace(/\\u0025/g, '%')
+    .replace(/\\u003d/g, '=')
+    .replace(/\\u003f/g, '?')
+    .replace(/\\u0026/g, '&')
+    .replace(/\\u002F/g, '/')
+    .replace(/\\u002f/g, '/')
+    .replace(/\\\//g, '/')
+    .replace(/\\/g, '');
+}
+
 /**
  * 快手提取 — 监听 API 响应，提取视频 URL。
  */
@@ -155,7 +169,7 @@ async function extractKuaishou(page, url, timeout) {
       // 1. 优先匹配 photoUrl（快手主视频 URL 字段）
       const photoMatch = body.match(/photoUrl["']?\s*[:=]\s*["']([^"']+)["']/);
       if (photoMatch) {
-        const found = photoMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+        const found = decodeVideoUrl(photoMatch[1]);
         if (found.includes('mp4') || found.includes('djvod') || found.includes('kwimgs')) {
           videoUrl = found;
           console.log(`[playwright] Kuaishou photoUrl: ${videoUrl.substring(0, 100)}`);
@@ -172,7 +186,7 @@ async function extractKuaishou(page, url, timeout) {
         for (const p of urlPatterns) {
           const m = body.match(p);
           if (m) {
-            const found = m[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+            const found = decodeVideoUrl(m[1]);
             if (found.includes('mp4') || found.includes('djvod')) {
               videoUrl = found;
               console.log(`[playwright] Kuaishou URL found: ${videoUrl.substring(0, 100)}`);
@@ -199,7 +213,7 @@ async function extractKuaishou(page, url, timeout) {
 
   // 如果还没找到，尝试从页面 DOM 提取
   if (!videoUrl) {
-    videoUrl = await page.evaluate(() => {
+    const domUrl = await page.evaluate(() => {
       // 查找 video 元素
       const v = document.querySelector('video');
       if (v && v.src) return v.src;
@@ -215,6 +229,7 @@ async function extractKuaishou(page, url, timeout) {
       }
       return null;
     }).catch(() => null);
+    if (domUrl) videoUrl = decodeVideoUrl(domUrl);
   }
 
   return { videoUrl, title: videoTitle, platform: '快手' };
