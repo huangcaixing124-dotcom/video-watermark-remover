@@ -107,6 +107,33 @@ async function extractWithPython(url) {
   throw new Error('所有 Python 提取器均失败');
 }
 
+/** 判断错误是否为 SSL/网络波动问题（可重试） */
+function isRetryableError(err) {
+  const msg = (err.message || '').toLowerCase();
+  return msg.includes('ssl') || msg.includes('unexpected_eof') || msg.includes('eof occurred')
+    || msg.includes('connection reset') || msg.includes('connection refused')
+    || msg.includes('unable to download webpage');
+}
+
+/**
+ * 带自动重试的 yt-dlp 解析（SSL 网络波动时自动重试）。
+ */
+async function _getVideoInfoWithRetry(url, options = {}, retries = 2) {
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
+    try {
+      return await _getVideoInfoWithYtdlp(url, options);
+    } catch (err) {
+      if (attempt <= retries && isRetryableError(err)) {
+        const delay = attempt * 1000; // 第1次重试等1秒，第2次等2秒
+        console.log(`[ytdlp] Retry attempt ${attempt}/${retries} after ${delay}ms: ${err.message}`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 /**
  * Full video info with format selection.
  * For Douyin URLs, tries yt-dlp first (with cookies), then falls back to proxy APIs.
@@ -116,7 +143,7 @@ async function getVideoInfo(url, options = {}) {
   if (isDouyinUrl(url)) {
     console.log(`[ytdlp] Detected Douyin URL, trying yt-dlp first`);
     try {
-      const result = await _getVideoInfoWithYtdlp(url, options);
+      const result = await _getVideoInfoWithRetry(url, options);
       if (result && result.title) {
         console.log(`[ytdlp] yt-dlp info succeeded: "${result.title.slice(0, 40)}"`);
         return result;
@@ -142,7 +169,7 @@ async function getVideoInfo(url, options = {}) {
 
   // Try yt-dlp for other platforms
   try {
-    const result = await _getVideoInfoWithYtdlp(url, options);
+    const result = await _getVideoInfoWithRetry(url, options);
 
     // For Xiaohongshu/Kuaishou, yt-dlp may parse metadata but not return a direct video URL.
     // Try the Python Playwright extractor as fallback to get the actual video URL.
@@ -315,14 +342,22 @@ async function downloadVideo(url, outputPath, options = {}) {
   // For Douyin URLs, try yt-dlp first (with cookies) to get non-watermarked version
   if (isDouyinUrl(url)) {
     console.log(`[ytdlp] Downloading Douyin video, trying yt-dlp first (cookies-based)`);
-    try {
-      const result = await _downloadWithYtdlp(url, finalPath, options);
-      if (result && result.filePath) {
-        console.log(`[ytdlp] yt-dlp download succeeded: ${result.filePath}`);
-        return result;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const result = await _downloadWithYtdlp(url, finalPath, options);
+        if (result && result.filePath) {
+          console.log(`[ytdlp] yt-dlp download succeeded: ${result.filePath}`);
+          return result;
+        }
+      } catch (err) {
+        if (attempt < 3 && isRetryableError(err)) {
+          console.log(`[ytdlp] Download retry ${attempt}/2: ${err.message}`);
+          await new Promise(r => setTimeout(r, attempt * 1000));
+          continue;
+        }
+        console.log(`[ytdlp] yt-dlp failed, falling back to proxy API: ${err.message}`);
+        break;
       }
-    } catch (err) {
-      console.log(`[ytdlp] yt-dlp failed, falling back to proxy API: ${err.message}`);
     }
 
     // Fallback: try proxy API direct URL
