@@ -280,7 +280,11 @@ Page({
           await wx.saveVideoToPhotosAlbum({ filePath });
         }
         wx.showToast({ title: '已保存到相册', icon: 'success' });
-        setTimeout(() => this.resetAll(), 500);
+        // 保存成功后只清空缓存引用，不重置页面（避免触发剪贴板重嗅探回到解析态）
+        this._precachePath = null;
+        this._precacheDone = false;
+        this._cachingInProgress = false;
+        setTimeout(() => this.resetAll(false), 800);
         return;
       }
 
@@ -297,7 +301,10 @@ Page({
       }
       await wx.saveVideoToPhotosAlbum({ tempFilePath: temp.tempFilePath });
       wx.showToast({ title: '已保存到相册', icon: 'success' });
-      setTimeout(() => this.resetAll(), 500);
+      this._precachePath = null;
+      this._precacheDone = false;
+      this._cachingInProgress = false;
+      setTimeout(() => this.resetAll(false), 800);
     } catch (err) {
       console.error('[save] error:', err);
       // 区分 404 和其他错误，给出更明确的提示
@@ -354,13 +361,14 @@ Page({
 
   hidePreview() { this.setData({ showPreview: false, previewUrl: '', previewTitle: '' }); },
 
-  resetAll() {
+  // 重置页面。默认重新嗅探剪贴板；rescanClipboard=false 用于保存成功后（避免再次进入解析态）
+  resetAll(rescanClipboard = true) {
     this.setData({
       url: '', videoInfo: null, taskId: null, progress: 0,
       statusText: '', statusHint: '', loading: false,
       downloading: false, saving: false, error: '',
       detectedUrl: '',
     });
-    this.detectClipboard();
+    if (rescanClipboard) this.detectClipboard();
   },
 });
