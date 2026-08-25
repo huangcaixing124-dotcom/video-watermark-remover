@@ -102,9 +102,32 @@ def extract_douyin(page, url):
                 duration = video.get('duration', 0)
 
                 if video_url:
+                    # Also extract images if present (Douyin image note)
+                    images = []
+                    image_infos = detail.get('image_infos', []) or detail.get('images', [])
+                    for img in image_infos:
+                        if isinstance(img, dict):
+                            # Try different image URL formats
+                            img_url = ''
+                            for key in ['url_list', 'display_url_list', 'origin_url', 'url']:
+                                vals = img.get(key, [])
+                                if isinstance(vals, list) and vals:
+                                    img_url = vals[0]
+                                    break
+                                elif isinstance(vals, str) and vals:
+                                    img_url = vals
+                                    break
+                            if img_url and img_url not in images:
+                                images.append(img_url)
+
+                    content_type = 'mixed' if images and video_url else 'video'
                     return {
                         'title': desc[:200] if desc else 'Untitled',
                         'author': author,
+                        'content_type': content_type,
+                        'images': images,
+                        'image_count': len(images),
+                        'description': desc,
                         'video_url': video_url,
                         'duration': duration / 1000 if duration > 1000 else duration,
                         'thumbnail': cover_url,
@@ -291,73 +314,113 @@ def extract_kuaishou(page, url):
 
 
 def extract_xiaohongshu(page, url):
-    """Extract video info from XiaoHongShu page."""
+    """Extract note info from XiaoHongShu page (supports both video and image notes)."""
+    import urllib.parse
     print(f"[xiaohongshu] Navigating to {url}", file=sys.stderr)
     page.goto(url, wait_until='domcontentloaded', timeout=30000)
     time.sleep(3)
 
-    # Method 1: Extract from __INITIAL_STATE__ or __NEXT_DATA__
+    # Method 1: Extract from __INITIAL_STATE__ or __NEXT_DATA__ (precise)
     try:
         data = page.evaluate("""
             () => {
                 try {
                     if (window.__INITIAL_STATE__) return JSON.stringify(window.__INITIAL_STATE__);
                     if (window.__NEXT_DATA__) return JSON.stringify(window.__NEXT_DATA__);
-
-                    // Try to find video element
-                    const video = document.querySelector('video');
-                    if (video) {
-                        const src = video.src || video.querySelector('source')?.src || '';
-                        if (src) return JSON.stringify({video_src: src});
-                    }
-
-                    // Try to find video URL in page source
-                    const scripts = document.querySelectorAll('script');
-                    for (const script of scripts) {
-                        const text = script.textContent;
-                        if (text.includes('videoUrl') || text.includes('video_url')) {
-                            const match = text.match(/"(https?:[^"]+\.mp4[^"]*)"/);
-                            if (match) return JSON.stringify({video_src: match[1]});
-                        }
-                    }
-
                     return null;
                 } catch(e) { return null; }
             }
         """)
         if data:
             parsed = json.loads(data)
-            video_url = parsed.get('video_src', '')
+            note = None
+            images = []
+            desc = ''
+            author = ''
 
-            # Try to extract from initial state
-            if not video_url and isinstance(parsed, dict):
-                # XiaoHongShu stores note data
-                note_data = parsed.get('note', {}).get('noteDetailMap', {})
-                for note_id, note_info in note_data.items():
-                    note = note_info.get('note', {})
-                    video = note.get('video', {})
-                    media = video.get('media', [{}])
-                    if media:
-                        video_url = media[0].get('url', '') if isinstance(media, list) else media.get('url', '')
+            # Try __INITIAL_STATE__.note.noteDetailMap
+            note_map = parsed.get('note', {}).get('noteDetailMap', {})
+            for note_id, note_info in note_map.items():
+                n = note_info.get('note', {})
+                if n:
+                    note = n
+                    break
+
+            # Try __INITIAL_STATE__.note.noteDetail
+            if not note:
+                note = parsed.get('note', {}).get('noteDetail', {})
+
+            # Try __NEXT_DATA__.props.pageProps.note
+            if not note:
+                try:
+                    note = parsed['props']['pageProps']['note']
+                except:
+                    pass
+
+            if note:
+                desc = note.get('desc', '') or note.get('title', '') or ''
+                author = note.get('user', {}).get('nickname', '') or note.get('author', '') or ''
+
+                # Extract images from image_list
+                image_list = note.get('image_list', []) or note.get('images', []) or note.get('imageList', [])
+                if image_list:
+                    for img in image_list:
+                        if isinstance(img, dict):
+                            url = img.get('url', '') or img.get('original', '') or img.get('info_list', [{}])[0].get('image_url', '') or ''
+                            if url:
+                                # Xiaohongshu stores image URLs with format: https://ci.xiaohongshu.com/xxx
+                                # Sometimes it's a relative path or needs scheme
+                                if url.startswith('//'):
+                                    url = 'https:' + url
+                                images.append(url)
+                        elif isinstance(img, str):
+                            if img.startswith('//'):
+                                img = 'https:' + img
+                            images.append(img)
+
+                # Also try image_list in image_list format (another common path)
+                if not images:
+                    for img in note.get('image_list', []):
+                        if isinstance(img, dict):
+                            info = img.get('info_list', [{}])[0] if img.get('info_list') else img
+                            url = info.get('image_url', '') or img.get('url', '')
+                            if url:
+                                if url.startswith('//'):
+                                    url = 'https:' + url
+                                images.append(url)
+
+                # Extract video URL if present
+                video = note.get('video', {}) or {}
+                video_url = ''
+                if video:
+                    media = video.get('media', []) or []
+                    if media and isinstance(media, list):
+                        video_url = media[0].get('url', '') or ''
+                    elif isinstance(media, dict):
+                        video_url = media.get('url', '') or ''
                     if not video_url:
-                        # Try other paths
-                        video_url = note.get('videoUrl', '') or note.get('url', '')
-                    if video_url:
-                        break
+                        video_url = video.get('url', '') or video.get('videoUrl', '') or ''
 
-            if video_url:
-                return {
-                    'title': page.title() or 'Untitled',
-                    'author': '',
-                    'video_url': video_url,
-                    'duration': 0,
-                    'thumbnail': '',
-                    'platform': '小红书',
-                }
+                if images or video_url:
+                    result = {
+                        'title': desc[:200] if desc else 'Untitled',
+                        'author': author,
+                        'content_type': 'image_set' if images and not video_url else ('mixed' if images and video_url else 'video'),
+                        'images': images,
+                        'image_count': len(images),
+                        'description': desc,
+                        'video_url': video_url,
+                        'duration': 0,
+                        'thumbnail': images[0] if images else '',
+                        'platform': '小红书',
+                    }
+                    print(f"[xiaohongshu] Extracted {len(images)} images, video={bool(video_url)}, desc={desc[:50]}", file=sys.stderr)
+                    return result
+
     except Exception as e:
         print(f"[xiaohongshu] JS extraction failed: {e}", file=sys.stderr)
 
-    # Method 2: Network interception
+    # Method 2: Try to find video (fallback bridge-extension style)
     try:
         video_urls = []
         def handle_response(response):
@@ -373,6 +436,10 @@ def extract_xiaohongshu(page, url):
             return {
                 'title': page.title() or 'Untitled',
                 'author': '',
+                'content_type': 'video',
+                'images': [],
+                'image_count': 0,
+                'description': '',
                 'video_url': video_urls[0],
                 'duration': 0,
                 'thumbnail': '',
@@ -381,7 +448,7 @@ def extract_xiaohongshu(page, url):
     except Exception as e:
         print(f"[xiaohongshu] Network interception failed: {e}", file=sys.stderr)
 
-    return {'error': '无法提取小红书视频信息，请检查链接是否正确'}
+    return {'error': '无法提取小红书笔记信息，请检查链接是否正确'}
 
 
 EXTRACTORS = {

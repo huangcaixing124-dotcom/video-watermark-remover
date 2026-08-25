@@ -586,4 +586,4 @@ function _platformLabel(extractor) {
   return labels[extractor?.toUpperCase()] || extractor || '其他';
 }
 
-module.exports = { getVideoInfo, downloadVideo, extractAudio, downloadFromUrl };
+module.exports = { getVideoInfo, downloadVideo, extractAudio, downloadFromUrl, extractWithPython };

@@ -1,0 +1,85 @@
+<!-- pages/album/album.wxml -->
+<view class="album-page {{isDark ? 'dark' : ''}}">
+  <!-- Header -->
+  <view class="page-header">
+    <text class="page-title">🖼️ 图文下载</text>
+    <text class="page-subtitle">小红书/抖音 图片笔记下载</text>
+  </view>
+
+  <!-- 输入区域 -->
+  <view class="card">
+    <view class="input-label">笔记链接</view>
+    <view class="input-bar">
+      <input class="input-field-url" placeholder="https://xhslink.com/..." value="{{url}}" bindinput="onUrlInput" />
+      <view class="input-btn" wx:if="{{url}}" bindtap="clearUrl">✕</view>
+    </view>
+    <button class="btn btn-primary action-btn" bindtap="pasteAndParse" disabled="{{loading || downloading}}">
+      {{loading ? '⏳ 解析中...' : downloading ? '⏳ 保存中...' : '📋 粘贴并解析'}}
+    </button>
+  </view>
+
+  <!-- 错误 -->
+  <view class="error-card" wx:if="{{error}}">
+    <text class="error-text">⚠️ {{error}}</text>
+    <view class="error-actions">
+      <button class="btn btn-secondary" style="flex:1" bindtap="newDownload">清空链接</button>
+    </view>
+  </view>
+
+  <!-- 笔记信息 -->
+  <view class="card" wx:if="{{noteInfo && !error}}">
+    <!-- 笔记头部 -->
+    <view class="note-header">
+      <view class="note-avatar-placeholder">🖼️</view>
+      <view class="note-meta">
+        <text class="note-title">{{noteInfo.title || '笔记'}}</text>
+        <text class="note-author" wx:if="{{noteInfo.author}}">{{noteInfo.author}}</text>
+        <text class="note-info">{{noteInfo.platform}} · {{imageCount}}张图片</text>
+      </view>
+    </view>
+
+    <!-- 文案 -->
+    <view class="desc-card" wx:if="{{description}}">
+      <text class="desc-label">文案</text>
+      <text class="desc-text">{{description}}</text>
+      <button class="btn btn-secondary desc-copy-btn" bindtap="copyDescription">📋 复制文案</button>
+    </view>
+
+    <!-- 图片网格 -->
+    <view class="image-grid" wx:if="{{images.length > 0}}">
+      <image
+        wx:for="{{images}}"
+        wx:key="index"
+        class="grid-image"
+        src="{{item.url}}"
+        mode="aspectFill"
+        data-index="{{index}}"
+        bindtap="previewImage"
+      />
+    </view>
+
+    <!-- 进度 -->
+    <view class="progress-section" wx:if="{{downloading}}">
+      <view class="progress-row">
+        <text class="progress-text">{{statusText}}</text>
+        <text class="progress-pct">{{progress}}%</text>
+      </view>
+      <view class="progress-bar"><view class="progress-fill" style="width:{{progress}}%"></view></view>
+      <text class="progress-hint" wx:if="{{statusHint}}">{{statusHint}}</text>
+    </view>
+
+    <!-- 保存按钮 -->
+    <button class="btn btn-primary save-btn" wx:elif="{{!downloading && images.length > 0}}" bindtap="saveAllImages" disabled="{{saving}}">
+      {{saving ? '⏳ 保存中...' : '▤ 全部保存到相册'}}
+    </button>
+    <text class="save-hint" wx:if="{{!downloading && images.length > 0}}">共{{imageCount}}张图片，保存到手机相册</text>
+  </view>
+
+  <!-- 引导到下载页 -->
+  <view class="guide-card" bindtap="goDownload">
+    <text class="guide-text">🎬 需要下载视频？去下载页</text>
+    <text class="guide-arrow">→</text>
+  </view>
+
+  <view class="safe-bottom"></view>
+</view>

@@ -6,6 +6,7 @@
  * - GET  /api/video/task/:id  - Get task status
  * - GET  /api/video/file/:id  - Get downloaded file
  * - GET  /api/video/platforms  - List supported platforms
+ * - POST /api/video/album/info  - Parse album/image note info
  */
 const express = require('express');
 const path = require('path');
@@ -14,7 +15,7 @@ const http = require('http');
 const https = require('https');
 const router = express.Router();
 
-const { getVideoInfo, downloadVideo } = require('../services/ytdlp');
+const { getVideoInfo, downloadVideo, extractWithPython } = require('../services/ytdlp');
 const { getPlayInfo, extractVideoId, isDoubaoUrl } = require('../services/doubao');
 const { getVideoInfo: getKuaishouInfo } = require('../services/kuaishou');
 const { createTask, getTask, getTaskFile, startCleanup } = require('../services/downloader');
@@ -715,6 +716,80 @@ router.get('/debug/doubao', async (req, res) => {
   }
 
   res.json({ success: true, diagnostics });
+});
+
+/**
+ * Parse album/image note info (Xiaohongshu / Douyin image notes).
+ * Returns title, description, author, and image list.
+ */
+router.post('/album/info', async (req, res) => {
+  const { url } = req.body;
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ error: '请提供笔记链接', field: 'url' });
+  }
+
+  const { platform: platKey, label: platLabel } = detectPlatform(url);
+  if (platKey !== 'xiaohongshu' && platKey !== 'douyin') {
+    return res.status(400).json({ error: `暂不支持 ${platLabel} 的图文解析` });
+  }
+
+  try {
+    // Use Python extractor (Playwright) which now returns image data
+    const pyResult = await extractWithPython(url);
+    if (!pyResult || pyResult.error) {
+      throw new Error(pyResult?.error || '解析失败');
+    }
+
+    // If it's a video-only note, still return what we have
+    const contentType = pyResult.content_type || 'image_set';
+    const images = (pyResult.images || []).filter(Boolean);
+
+    // Ensure all image URLs have proper scheme
+    const cleanImages = images.map(url => {
+      if (url && url.startsWith('//')) return 'https:' + url;
+      return url;
+    });
+
+    res.json({
+      success: true,
+      data: {
+        title: (pyResult.title || 'Untitled').slice(0, 200),
+        author: pyResult.author || '',
+        description: pyResult.description || '',
+        platform: pyResult.platform || platLabel,
+        contentType,
+        imageCount: cleanImages.length,
+        images: cleanImages.map((url, idx) => ({
+          url,
+          index: idx,
+        })),
+        hasVideo: !!pyResult.video_url,
+        videoUrl: pyResult.video_url || null,
+      },
+    });
+  } catch (err) {
+    // Fallback to playwright extractor for video-only notes
+    try {
+      const pwResult = await playwrightExtract(url, { timeout: 30000 });
+      if (pwResult && pwResult.videoUrl) {
+        return res.json({
+          success: true,
+          data: {
+            title: pwResult.title || platLabel + '笔记',
+            author: '',
+            description: '',
+            platform: platLabel,
+            contentType: 'video',
+            imageCount: 0,
+            images: [],
+            hasVideo: true,
+            videoUrl: pwResult.videoUrl,
+          },
+        });
+      }
+    } catch {}
+    res.status(400).json({ error: err.message });
+  }
 });
 
 module.exports = router;

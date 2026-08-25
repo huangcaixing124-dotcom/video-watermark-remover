@@ -1,7 +1,7 @@
 {
   "pages": [
-    "pages/index/index",
     "pages/download/download",
+    "pages/album/album",
     "pages/transcript/transcript",
     "pages/history/history",
     "pages/settings/settings"
@@ -23,6 +23,12 @@
         "text": "下载",
         "iconPath": "images/download.png",
         "selectedIconPath": "images/download-active.png"
+      },
+      {
+        "pagePath": "pages/album/album",
+        "text": "图文",
+        "iconPath": "images/album.png",
+        "selectedIconPath": "images/album-active.png"
       },
       {
         "pagePath": "pages/transcript/transcript",
