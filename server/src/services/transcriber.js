@@ -197,45 +197,69 @@ async function runTranscription(task) {
   }
 }
 
+/** 判断错误是否为 SSL/网络波动问题（可重试） */
+function isRetryableError(err) {
+  const msg = (err.message || '').toLowerCase();
+  return msg.includes('ssl') || msg.includes('unexpected_eof') || msg.includes('eof occurred')
+    || msg.includes('connection reset') || msg.includes('connection refused');
+}
+
 /**
- * Download video via yt-dlp.
+ * Download video via yt-dlp，带 SSL 网络波动自动重试。
  */
 function downloadVideoWithYTDL(url, outputDir) {
   return new Promise((resolve, reject) => {
-    const args = [
-      '--no-playlist',
-      '--no-warnings',
-      '-f', 'bestaudio[ext=m4a]/bestaudio/best', // 只下载音频，不下载视频
-      '-o', path.join(outputDir, 'audio.%(ext)s'),
-    ];
+    const attempt = (triesLeft) => {
+      const args = [
+        '--no-playlist',
+        '--no-warnings',
+        '-f', 'bestaudio[ext=m4a]/bestaudio/best', // 只下载音频，不下载视频
+        '-o', path.join(outputDir, 'audio.%(ext)s'),
+      ];
 
-    // Check cookies
-    const cookiesFile = path.join(config.projectDir, 'cookies.txt');
-    if (fs.existsSync(cookiesFile)) {
-      args.push('--cookies', cookiesFile);
-    }
-
-    args.push(url);
-
-    const proc = spawn('yt-dlp', args, {
-      timeout: 0, // 不限时
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
-
-    let stderr = '';
-
-    proc.stderr.on('data', data => { stderr += data.toString(); });
-
-    proc.on('close', code => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(stderr.slice(0, 300) || `yt-dlp exit ${code}`));
+      // Check cookies
+      const cookiesFile = path.join(config.projectDir, 'cookies.txt');
+      if (fs.existsSync(cookiesFile)) {
+        args.push('--cookies', cookiesFile);
       }
-    });
 
-    proc.on('error', reject);
+      args.push(url);
+
+      const proc = spawn('yt-dlp', args, {
+        timeout: 0, // 不限时
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+
+      let stderr = '';
+
+      proc.stderr.on('data', data => { stderr += data.toString(); });
+
+      proc.on('close', code => {
+        if (code === 0) {
+          resolve();
+        } else {
+          const err = new Error(stderr.slice(0, 300) || `yt-dlp exit ${code}`);
+          if (triesLeft > 0 && isRetryableError(err)) {
+            const delay = (2 - triesLeft + 1) * 1000;
+            console.log(`[transcriber] yt-dlp retry (${triesLeft} left) after ${delay}ms: ${err.message}`);
+            setTimeout(() => attempt(triesLeft - 1), delay);
+          } else {
+            reject(err);
+          }
+        }
+      });
+
+      proc.on('error', (e) => {
+        if (triesLeft > 0 && isRetryableError(e)) {
+          setTimeout(() => attempt(triesLeft - 1), 1000);
+        } else {
+          reject(e);
+        }
+      });
+    };
+
+    attempt(2); // 最多 2 次重试（共 3 次尝试）
   });
 }
 

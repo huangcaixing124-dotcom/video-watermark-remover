@@ -35,13 +35,13 @@ def detect_platform(url):
 
 
 def extract_douyin(page, url):
-    """Extract video info from Douyin page."""
+    """Extract video info from Douyin page (supports video AND image notes)."""
     import urllib.parse
     print(f"[douyin] Navigating to {url}", file=sys.stderr)
 
-    # Extract video ID from URL
+    # Extract video ID from URL (support /video/ and /note/)
     video_id = ''
-    match = re.search(r'/video/(\d+)', url)
+    match = re.search(r'/(?:video|note)/(\d+)', url)
     if match:
         video_id = match.group(1)
     else:
@@ -49,7 +49,7 @@ def extract_douyin(page, url):
         page.goto(url, wait_until='domcontentloaded', timeout=30000)
         time.sleep(2)
         current_url = page.url
-        match = re.search(r'/video/(\d+)', current_url)
+        match = re.search(r'/(?:video|note)/(\d+)', current_url)
         if match:
             video_id = match.group(1)
 
@@ -147,6 +147,7 @@ def extract_douyin(page, url):
             raw_data = urllib.parse.unquote(render_match.group(1))
             data = json.loads(raw_data)
 
+            images_found = []
             for key, value in data.items():
                 if isinstance(value, dict):
                     aweme = value.get('aweme', {}).get('detail', {})
@@ -165,52 +166,121 @@ def extract_douyin(page, url):
                         desc = aweme.get('desc', '')
                         duration = video.get('duration', 0)
 
-                        if video_url:
-                            return {
-                                'title': desc[:200] if desc else 'Untitled',
-                                'author': author,
-                                'video_url': video_url,
-                                'duration': duration / 1000 if duration > 1000 else duration,
-                                'thumbnail': cover_url,
-                                'platform': '抖音',
-                            }
+                        # 图文笔记：提取图片列表
+                        img_post = aweme.get('image_post_info', {})
+                        img_infos = img_post.get('images', [])
+                        for img in img_infos:
+                            disp = img.get('display_image', {})
+                            ul = disp.get('url_list', [])
+                            if ul:
+                                images_found.append(ul[0])
+                            # 原图（更高清）
+                            if not ul:
+                                orig = img.get('origin_image', {})
+                                ol = orig.get('url_list', [])
+                                if ol:
+                                    images_found.append(ol[0])
+
+                        content_type = 'mixed' if images_found and video_url else ('image_set' if images_found else 'video')
+                        return {
+                            'title': desc[:200] if desc else 'Untitled',
+                            'author': author,
+                            'content_type': content_type,
+                            'images': images_found,
+                            'image_count': len(images_found),
+                            'description': desc,
+                            'video_url': video_url,
+                            'duration': duration / 1000 if duration > 1000 else duration,
+                            'thumbnail': cover_url or (images_found[0] if images_found else ''),
+                            'platform': '抖音',
+                        }
     except Exception as e:
         print(f"[douyin] Page extraction failed: {e}", file=sys.stderr)
 
-    # Method 3: Network interception
+    # Method 3: Network interception (only for video notes, skip if /note/ image post)
+    if '/note/' not in page.url:
+        try:
+            video_urls = []
+            def handle_response(response):
+                u = response.url
+                # 过滤装饰性/背景视频（页面 UI 的视频，非笔记内容）
+                if 'douyin-pc-web' in u or 'uuu_265' in u or 'douyin_pc_client' in u:
+                    return
+                if any(x in u for x in ['douyinvod.com', 'v26', 'v3-web', 'playaddr', '.mp4', 'aweme/detail']):
+                    try:
+                        if 'aweme/detail' in u:
+                            body = response.json()
+                            detail = body.get('aweme_detail', {})
+                            if detail:
+                                play = detail.get('video', {}).get('play_addr', {}).get('url_list', [])
+                                if play:
+                                    video_urls.append(play[0])
+                        elif '.mp4' in u or 'douyinvod' in u:
+                            video_urls.append(u)
+                    except:
+                        pass
+
+            page.on('response', handle_response)
+            page.reload(wait_until='domcontentloaded', timeout=30000)
+            time.sleep(5)
+
+            if video_urls:
+                return {
+                    'title': page.title() or 'Untitled',
+                    'author': '',
+                    'video_url': video_urls[0],
+                    'duration': 0,
+                    'thumbnail': '',
+                    'platform': '抖音',
+                }
+        except Exception as e:
+            print(f"[douyin] Network interception failed: {e}", file=sys.stderr)
+
+    # 如果已经识别为 /note/，直接跳到图文 DOM 提取
+    if '/note/' in page.url:
+        pass  # 继续执行 Method 4
+
+    # Method 4: 图文笔记 — 从页面 DOM 提取真实笔记图片（过滤静态资源）
     try:
-        video_urls = []
-        def handle_response(response):
-            u = response.url
-            if any(x in u for x in ['douyinvod.com', 'v26', 'v3-web', 'playaddr', '.mp4', 'aweme/detail']):
-                try:
-                    if 'aweme/detail' in u:
-                        body = response.json()
-                        detail = body.get('aweme_detail', {})
-                        if detail:
-                            play = detail.get('video', {}).get('play_addr', {}).get('url_list', [])
-                            if play:
-                                video_urls.append(play[0])
-                    elif '.mp4' in u or 'douyinvod' in u:
-                        video_urls.append(u)
-                except:
-                    pass
+        # 先导航到图片完整加载的页面
+        if '/video/' not in page.url and '/note/' not in page.url:
+            page.goto(url, wait_until='domcontentloaded', timeout=30000)
+        page.wait_for_timeout(5000)
 
-        page.on('response', handle_response)
-        page.reload(wait_until='domcontentloaded', timeout=30000)
-        time.sleep(5)
+        images = page.evaluate("""
+            () => {
+                const set = new Set();
+                document.querySelectorAll('img').forEach(img => {
+                    if (img.src && img.src.includes('douyinpic.com')) {
+                        const s = img.src;
+                        // 过滤掉图标/静态资源
+                        if (s.includes('aweme-client-static') || s.includes('im-resource') || s.includes('logo') || s.includes('icon')) return;
+                        // 去掉尺寸参数和签名后缀，保留原始图地址
+                        const base = s.split('~tplv-')[0];
+                        const cleaned = base.split('?')[0];
+                        if (cleaned.startsWith('http')) set.add(cleaned);
+                    }
+                });
+                return Array.from(set);
+            }
+        """)
 
-        if video_urls:
+        if images:
+            # 用第一个图作为封面
             return {
-                'title': page.title() or 'Untitled',
+                'title': page.title() or '抖音图文',
                 'author': '',
-                'video_url': video_urls[0],
+                'content_type': 'image_set',
+                'images': images,
+                'image_count': len(images),
+                'description': page.title() or '',
+                'video_url': '',
                 'duration': 0,
-                'thumbnail': '',
+                'thumbnail': images[0],
                 'platform': '抖音',
             }
     except Exception as e:
-        print(f"[douyin] Network interception failed: {e}", file=sys.stderr)
+        print(f"[douyin] Image note extraction failed: {e}", file=sys.stderr)
 
     return {'error': '无法提取抖音视频信息，请检查链接是否正确'}
 
@@ -484,7 +554,7 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=['--no-sandbox', '--disable-gpu'],
+            args=['--no-sandbox', '--disable-gpu', '--disable-blink-features=AutomationControlled'],
         )
 
         context = browser.new_context(
@@ -492,36 +562,62 @@ def main():
             viewport={'width': 1280, 'height': 800},
         )
 
-        # Load cookies if available
-        cookies_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')
-        if os.path.exists(cookies_file):
+        # 对需要防检测的平台注入脚本绕过 headless 识别（抖音等）
+        # (实际注入在 page 创建后执行)
+
+        # Load cookies if available — 抖音图文若带 cookies 会触发风控拿不到图片，故抖音跳过
+        if platform == 'douyin':
+            print("[main] Skipping cookies for douyin (avoids captcha block)", file=sys.stderr)
+        elif os.path.exists(cookies_file):
             try:
+                # 平台对应的 cookie 域名关键词
+                platform_cookie_domains = {
+                    'kuaishou': ['kuaishou.com', 'gifshow.com'],
+                    'xiaohongshu': ['xiaohongshu.com', 'xhscdn.com'],
+                    'weibo': ['weibo.com'],
+                }
+                keep_domains = platform_cookie_domains.get(platform)
                 cookies = []
                 with open(cookies_file, 'r', encoding='utf-8') as f:
                     for line in f:
                         line = line.strip()
+                        if line.startswith('#HttpOnly_'):
+                            line = line[len('#HttpOnly_'):]
                         if not line or line.startswith('#'):
                             continue
                         parts = line.split('\t')
-                        if len(parts) >= 7:
-                            domain = parts[0]
-                            if domain.startswith('.'):
-                                domain = domain[1:]
-                            cookies.append({
-                                'name': parts[5],
-                                'value': parts[6],
-                                'domain': parts[0],
-                                'path': parts[2],
-                                'secure': parts[3] == 'TRUE',
-                                'httpOnly': False,
-                            })
+                        if len(parts) < 7:
+                            continue
+                        raw_domain = parts[0]
+                        domain = raw_domain.lstrip('.')
+                        # 只保留当前平台域的 cookie
+                        if keep_domains and not any(domain.endswith(d) or d.endswith(domain) for d in keep_domains):
+                            continue
+                        cookies.append({
+                            'name': parts[5],
+                            'value': parts[6],
+                            'domain': raw_domain,
+                            'path': parts[2],
+                            'secure': parts[3] == 'TRUE',
+                            'httpOnly': False,
+                        })
                 if cookies:
                     context.add_cookies(cookies)
-                    print(f"[main] Loaded {len(cookies)} cookies", file=sys.stderr)
+                    print(f"[main] Loaded {len(cookies)} {platform} cookies", file=sys.stderr)
             except Exception as e:
                 print(f"[main] Failed to load cookies: {e}", file=sys.stderr)
 
         page = context.new_page()
+
+        # 绕过 headless 检测（抖音等平台），提升图文/视频提取稳定性
+        if platform == 'douyin':
+            page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                window.chrome = { runtime: {} };
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (p) => p.name === 'notifications' ? Promise.resolve({ state: 'denied' }) : originalQuery(p);
+            """)
+            print("[main] Injected headless-bypass script for douyin", file=sys.stderr)
 
         try:
             result = EXTRACTORS[platform](page, url)

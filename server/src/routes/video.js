@@ -737,23 +737,8 @@ router.post('/album/info', async (req, res) => {
     let result = null;
 
     if (platKey === 'xiaohongshu') {
-      // Xiaohongshu: use Playwright to intercept album data from API responses
-      const pwResult = await playwrightExtract(url, { timeout: 45000 });
-      if (pwResult && pwResult.videoUrl) {
-        result = {
-          title: pwResult.title || '小红书笔记',
-          author: pwResult.author || '',
-          description: '',
-          platform: '小红书',
-          contentType: 'video',
-          imageCount: 0,
-          images: [],
-          hasVideo: true,
-          videoUrl: pwResult.videoUrl,
-        };
-      } else {
-        throw new Error('未能提取到小红书笔记');
-      }
+      // Xiaohongshu: use Playwright dedicated album extraction
+      result = await extractXiaohongshuAlbum(url);
     } else {
       // Douyin: try Python extractor (it now supports image extraction)
       const pyResult = await extractWithPython(url);
@@ -782,5 +767,131 @@ router.post('/album/info', async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
+
+/**
+ * 小红书图文笔记提取 — 纯 HTTP 解析 window.__INITIAL_STATE__。
+ * 参考成熟方案：先请求短链获取完整 URL（含note_id），再从页面HTML解析内嵌数据。
+ */
+async function extractXiaohongshuAlbum(url) {
+  // 小某书无需 cookies 也能在页面 HTML 里拿到 __INITIAL_STATE__（登录态反而可能触发风控跳转）
+  // 若需要完整数据可尝试附带 cookies，先以无 cookies 为主
+
+  // 2. 请求完整页面 HTML（自动跟随重定向短链→真实笔记页），解析 __INITIAL_STATE__
+  const html = await httpGetText(url, '', true);
+  const state = parseInitialState(html);
+  if (!state) throw new Error('没有找到小红书笔记初始数据，链接可能过期或页面结构已变化');
+
+  // 3. 从 noteDetailMap 找到目标笔记
+  const noteMap = state?.note?.noteDetailMap || {};
+  let note = null;
+  for (const key of Object.keys(noteMap)) {
+    note = noteMap[key]?.note;
+    if (note) break;
+  }
+  if (!note) {
+    const firstNoteId = state?.note?.firstNoteId;
+    note = (firstNoteId && noteMap[firstNoteId]?.note) || Object.values(noteMap)[0]?.note;
+  }
+  if (!note) throw new Error('没有找到小红书笔记详情');
+
+  // 4. 提取图片（imageList[].infoList[].url，优先高清）
+  const images = [];
+  const imageList = note.imageList || note.images || [];
+  for (const img of imageList) {
+    if (!img) continue;
+    let bestUrl = '';
+    for (const info of (img.infoList || [])) {
+      if (info?.url) bestUrl = info.url; // 取最后一个（通常对应高清）
+    }
+    if (!bestUrl) bestUrl = img.urlDefault || img.url || '';
+    if (bestUrl && !bestUrl.includes('fix=.png')) images.push(bestUrl);
+  }
+
+  // 5. 提取文案和作者
+  const desc = note.desc || note.title || '';
+  const author = note.user?.nickname || note.author || '';
+  const title = (note.title?.trim() || (desc || '').split('\n')[0]?.trim() || '小红书笔记').slice(0, 200);
+
+  return {
+    title,
+    author: author || '',
+    description: desc || '',
+    platform: '小红书',
+    contentType: images.length > 0 ? 'image_set' : 'video',
+    imageCount: images.length,
+    images: images.map((u, idx) => ({ url: u, index: idx })),
+    hasVideo: !!note.video,
+    videoUrl: note.video?.media?.[0]?.url || note.video?.url || null,
+  };
+}
+
+/** HTTP GET 返回文本，自动跟随重定向（最多5跳，类似 curl -L） */
+function httpGetText(url, cookieHeader, followRedirect = true, depth = 0) {
+  return new Promise((resolve, reject) => {
+    if (depth > 5) return resolve(''); // 重定向过多次，放弃
+    const mod = url.startsWith('https') ? https : http;
+    mod.get(url, {
+      headers: {
+        'User-Agent': UA,
+        'Cookie': cookieHeader,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+        'Referer': 'https://www.xiaohongshu.com/',
+      },
+      timeout: 25000,
+    }, (res) => {
+      // 处理重定向
+      if (followRedirect && res.statusCode >= 300 && res.statusCode < 400 && res.headers?.location) {
+        res.resume();
+        const nextUrl = new URL(res.headers.location, url).href;
+        return resolve(httpGetText(nextUrl, cookieHeader, followRedirect, depth + 1));
+      }
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', c => data += c);
+      res.on('end', () => resolve(data));
+    }).on('error', (err) => reject(new Error(`请求小红书失败: ${err.message}`)));
+  });
+}
+
+/** 从 HTML 解析 window.__INITIAL_STATE__ 为 JSON 对象 */
+function parseInitialState(html) {
+  const marker = 'window.__INITIAL_STATE__=';
+  const start = html.indexOf(marker);
+  if (start < 0) return null;
+  const jsonStart = html.indexOf('{', start + marker.length);
+  if (jsonStart < 0) return null;
+  const jsonEnd = findMatchingBrace(html, jsonStart);
+  if (jsonEnd < 0) return null;
+  const raw = html.substring(jsonStart, jsonEnd + 1);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // 处理 JSON 里的 JS 字面量（undefined 等）
+    try {
+      return JSON.parse(raw.replace(/\bundefined\b/g, 'null'));
+    } catch { return null; }
+  }
+}
+
+/** 找到匹配的右花括号 */
+function findMatchingBrace(text, openingIndex) {
+  let depth = 0, inString = false, quote = '', escaped = false;
+  for (let i = openingIndex; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === quote) inString = false;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { inString = true; quote = ch; }
+    else if (ch === '{') depth++;
+    else if (ch === '}') { depth--; if (depth === 0) return i; }
+  }
+    return -1;
+}
+
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
 module.exports = router;
