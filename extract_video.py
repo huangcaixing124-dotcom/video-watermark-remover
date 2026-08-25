@@ -27,7 +27,7 @@ def detect_platform(url):
         return 'douyin'
     elif 'kuaishou.com' in url or 'gifshow.com' in url:
         return 'kuaishou'
-    elif 'xiaohongshu.com' in url or 'xhslink.com' in url:
+    elif 'xiaohongshu.com' in url or 'xhslink.com' in url or 'xhslink.cn' in url:
         return 'xiaohongshu'
     elif 'weibo.com' in url or 'weibo.cn' in url:
         return 'weibo'

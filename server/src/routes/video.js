@@ -734,60 +734,51 @@ router.post('/album/info', async (req, res) => {
   }
 
   try {
-    // Use Python extractor (Playwright) which now returns image data
-    const pyResult = await extractWithPython(url);
-    if (!pyResult || pyResult.error) {
-      throw new Error(pyResult?.error || '解析失败');
-    }
+    let result = null;
 
-    // If it's a video-only note, still return what we have
-    const contentType = pyResult.content_type || 'image_set';
-    const images = (pyResult.images || []).filter(Boolean);
+    if (platKey === 'xiaohongshu') {
+      // Xiaohongshu: use Playwright to intercept album data from API responses
+      const pwResult = await playwrightExtract(url, { timeout: 45000 });
+      if (pwResult && pwResult.videoUrl) {
+        result = {
+          title: pwResult.title || '小红书笔记',
+          author: pwResult.author || '',
+          description: '',
+          platform: '小红书',
+          contentType: 'video',
+          imageCount: 0,
+          images: [],
+          hasVideo: true,
+          videoUrl: pwResult.videoUrl,
+        };
+      } else {
+        throw new Error('未能提取到小红书笔记');
+      }
+    } else {
+      // Douyin: try Python extractor (it now supports image extraction)
+      const pyResult = await extractWithPython(url);
+      if (!pyResult || pyResult.error) throw new Error(pyResult?.error || '解析失败');
 
-    // Ensure all image URLs have proper scheme
-    const cleanImages = images.map(url => {
-      if (url && url.startsWith('//')) return 'https:' + url;
-      return url;
-    });
+      const images = (pyResult.images || []).filter(Boolean).map(u => {
+        if (u && u.startsWith('//')) return 'https:' + u;
+        return u;
+      });
 
-    res.json({
-      success: true,
-      data: {
+      result = {
         title: (pyResult.title || 'Untitled').slice(0, 200),
         author: pyResult.author || '',
         description: pyResult.description || '',
         platform: pyResult.platform || platLabel,
-        contentType,
-        imageCount: cleanImages.length,
-        images: cleanImages.map((url, idx) => ({
-          url,
-          index: idx,
-        })),
+        contentType: images.length > 0 ? 'image_set' : 'video',
+        imageCount: images.length,
+        images: images.map((url, idx) => ({ url, index: idx })),
         hasVideo: !!pyResult.video_url,
         videoUrl: pyResult.video_url || null,
-      },
-    });
+      };
+    }
+
+    res.json({ success: true, data: result });
   } catch (err) {
-    // Fallback to playwright extractor for video-only notes
-    try {
-      const pwResult = await playwrightExtract(url, { timeout: 30000 });
-      if (pwResult && pwResult.videoUrl) {
-        return res.json({
-          success: true,
-          data: {
-            title: pwResult.title || platLabel + '笔记',
-            author: '',
-            description: '',
-            platform: platLabel,
-            contentType: 'video',
-            imageCount: 0,
-            images: [],
-            hasVideo: true,
-            videoUrl: pwResult.videoUrl,
-          },
-        });
-      }
-    } catch {}
     res.status(400).json({ error: err.message });
   }
 });

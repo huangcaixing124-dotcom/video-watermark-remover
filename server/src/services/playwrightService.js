@@ -116,6 +116,8 @@ async function extractVideo(url, options = {}) {
       result = await extractDoubao(page, url, timeout);
     } else if (url.includes('douyin.com') || url.includes('iesdouyin.com')) {
       result = await extractDouyin(page, url, timeout);
+    } else if (url.includes('xiaohongshu.com') || url.includes('xhslink.com') || url.includes('xhslink.cn')) {
+      result = await extractXiaohongshu(page, url, timeout);
     } else {
       throw new Error('不支持的平台');
     }
@@ -304,6 +306,64 @@ async function extractDouyin(page, url, timeout) {
   await page.waitForTimeout(5000);
 
   return { videoUrl, title: videoTitle, platform: '抖音' };
+}
+
+/**
+ * 小红书提取 — 拦截 API 响应获取笔记数据（支持视频和图文）。
+ */
+async function extractXiaohongshu(page, url, timeout) {
+  let videoUrl = null;
+  let videoTitle = '小红书笔记';
+  let author = '';
+  let description = '';
+
+  // 拦截所有请求，从 API 响应中提取笔记数据
+  await page.route('**/*', async (route) => {
+    const response = await route.fetch();
+    if (!videoUrl) {
+      try {
+        const ct = response.headers()['content-type'] || '';
+        // 关注 JSON 响应和 JavaScript 响应（可能包含内嵌数据）
+        if (ct.includes('json') || ct.includes('javascript')) {
+          const body = await response.text();
+          if (body && body.length > 100) {
+            // 提取视频 URL
+            const vMatch = body.match(/https?:\/\/[^"'\s,]+\.(?:mp4|m3u8)[^"'\s,]*/);
+            if (vMatch) videoUrl = vMatch[0];
+
+            // 提取标题/描述
+            const descMatch = body.match(/"display_title"\s*:\s*"([^"]+)"/);
+            if (descMatch && !description) description = descMatch[1];
+            if (!description) {
+              const dMatch = body.match(/"desc"\s*:\s*"([^"]+)"/);
+              if (dMatch) description = dMatch[1];
+            }
+
+            // 提取作者
+            const aMatch = body.match(/"nickname"\s*:\s*"([^"]+)"/);
+            if (aMatch && !author) author = aMatch[1];
+          }
+        }
+      } catch {}
+    }
+    route.fulfill({ response });
+  });
+
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+  await page.waitForTimeout(5000);
+
+  // 如果还没找到视频 URL，尝试从 DOM 提取
+  if (!videoUrl) {
+    videoUrl = await page.evaluate(() => {
+      const v = document.querySelector('video');
+      if (v && v.src) return v.src;
+      const s = document.querySelector('video source');
+      if (s && s.src) return s.src;
+      return null;
+    }).catch(() => null);
+  }
+
+  return { videoUrl, title: videoTitle, author, platform: '小红书' };
 }
 
 module.exports = { extractVideo, closeBrowser, getBrowser };
