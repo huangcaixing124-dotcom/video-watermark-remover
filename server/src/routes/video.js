@@ -629,10 +629,17 @@ router.get('/image', async (req, res) => {
 
   try {
     const mod = imageUrl.startsWith('https') ? https : http;
+    // 根据图片域名动态设置 Referer（抖音/小红书防盗链要求不同的 Referer）
+    let referer = 'https://www.xiaohongshu.com/';
+    if (imageUrl.includes('douyinpic.com') || imageUrl.includes('douyincdn.com') || imageUrl.includes('bytedance')) {
+      referer = 'https://www.douyin.com/';
+    } else if (imageUrl.includes('xiaohongshu') || imageUrl.includes('xhscdn')) {
+      referer = 'https://www.xiaohongshu.com/';
+    }
     mod.get(imageUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://www.xiaohongshu.com/',
+        'Referer': referer,
       },
       timeout: 15000,
     }, (proxyRes) => {

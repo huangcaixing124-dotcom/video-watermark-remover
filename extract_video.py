@@ -255,10 +255,8 @@ def extract_douyin(page, url):
                         const s = img.src;
                         // 过滤掉图标/静态资源
                         if (s.includes('aweme-client-static') || s.includes('im-resource') || s.includes('logo') || s.includes('icon')) return;
-                        // 去掉尺寸参数和签名后缀，保留原始图地址
-                        const base = s.split('~tplv-')[0];
-                        const cleaned = base.split('?')[0];
-                        if (cleaned.startsWith('http')) set.add(cleaned);
+                        // 保留完整 URL（含 ~tplv 尺寸后缀和 ?签名参数），代理时会用到完整签名才有权访问
+                        if (s.startsWith('http')) set.add(s);
                     }
                 });
                 return Array.from(set);
