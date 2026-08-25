@@ -240,12 +240,12 @@ def extract_douyin(page, url):
     if '/note/' in page.url:
         pass  # 继续执行 Method 4
 
-    # Method 4: 图文笔记 — 从页面 DOM 提取真实笔记图片（过滤静态资源）
+    # Method 4: 图文笔记 — 从页面 DOM 提取真实笔记图片（仅主图，过滤静态资源和页面其他图片）
     try:
         # 先导航到图片完整加载的页面
         if '/video/' not in page.url and '/note/' not in page.url:
             page.goto(url, wait_until='domcontentloaded', timeout=30000)
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(6000)
 
         images = page.evaluate("""
             () => {
@@ -253,9 +253,13 @@ def extract_douyin(page, url):
                 document.querySelectorAll('img').forEach(img => {
                     if (img.src && img.src.includes('douyinpic.com')) {
                         const s = img.src;
-                        // 过滤掉图标/静态资源
-                        if (s.includes('aweme-client-static') || s.includes('im-resource') || s.includes('logo') || s.includes('icon')) return;
-                        // 保留完整 URL（含 ~tplv 尺寸后缀和 ?签名参数），代理时会用到完整签名才有权访问
+                        // 只保留笔记正文主图：tos-cn-i-0813 + ~tplv-dy-aweme-images
+                        // 排除：静态资源、/obj/、默认头像(tsj2vxp0zn)、其他sign后缀(p26-sign)
+                        if (s.includes('aweme-client-static') || s.includes('im-resource')) return;
+                        if (s.includes('/obj/') || s.includes('tsj2vxp0zn')) return;
+                        if (!s.includes('tos-cn-i-0813')) return;
+                        if (!s.includes('~tplv-dy-aweme-images')) return;
+                        // 保留完整 URL（含签名，代理时才能访问）
                         if (s.startsWith('http')) set.add(s);
                     }
                 });
@@ -264,14 +268,23 @@ def extract_douyin(page, url):
         """)
 
         if images:
-            # 用第一个图作为封面
+            # 用 meta[name=description] 作为文案（比 title 更完整，含完整描述），否则用 title
+            desc = ''
+            try:
+                desc_el = page.query_selector('meta[name="description"]')
+                if desc_el:
+                    desc = desc_el.get_attribute('content') or ''
+            except Exception:
+                pass
+            if not desc:
+                desc = page.title() or ''
             return {
                 'title': page.title() or '抖音图文',
                 'author': '',
                 'content_type': 'image_set',
                 'images': images,
                 'image_count': len(images),
-                'description': page.title() or '',
+                'description': desc,
                 'video_url': '',
                 'duration': 0,
                 'thumbnail': images[0],

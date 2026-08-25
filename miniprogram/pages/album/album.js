@@ -152,44 +152,53 @@ Page({
     this.setData({ images, selectedCount: allSelected ? 0 : images.length });
   },
 
-  // 下载选中的图片到相册
+  // 下载选中的图片到相册（并发下载，一次性保存）
   async saveSelectedImages() {
     const selected = this.data.images.filter(i => i.selected);
     if (selected.length === 0) { wx.showToast({ title: '请先选择图片', icon: 'none' }); return; }
     if (this.data.saving) return;
 
-    this.setData({ saving: true, downloading: true, statusText: '正在保存图片...' });
+    this.setData({ saving: true, downloading: true, statusText: '正在下载图片...' });
 
-    let saved = 0;
+    // 1. 并发下载所有选中图片到临时文件（并行加速）
+    let tempFiles = [];
     let failed = 0;
+    const promises = selected.map(img => new Promise((resolve) => {
+      wx.downloadFile({
+        url: img.proxy,
+        success: (res) => {
+          if (res.statusCode === 200) {
+            tempFiles.push(res.tempFilePath);
+            resolve(true);
+          } else { failed++; resolve(false); }
+        },
+        fail: () => { failed++; resolve(false); },
+      });
+    }));
+    await Promise.all(promises);
+    this.setData({ statusText: '图片已下载，正在保存到相册...', progress: 80 });
 
-    for (let i = 0; i < selected.length; i++) {
-      const img = selected[i];
-      const pct = Math.round((i / selected.length) * 100);
-      this.setData({ progress: pct, statusHint: `第 ${i + 1}/${selected.length} 张` });
+    // 2. 授权一次
+    try {
+      await wx.saveImageToPhotosAlbum({ filePath: tempFiles[0] });
+    } catch (authErr) {
+      try { await wx.authorize({ scope: 'scope.writePhotosAlbum' }); } catch {
+        wx.showToast({ title: '请在设置中开启相册权限', icon: 'none' });
+        this.setData({ saving: false, downloading: false, progress: 0 });
+        return;
+      }
+    }
 
+    // 3. 逐个静默保存到相册（已授权，不再弹窗）
+    let saved = 0;
+    for (let i = 0; i < tempFiles.length; i++) {
+      const pct = Math.round(80 + (i / selected.length) * 20);
+      this.setData({ progress: pct, statusHint: `正在保存 ${i + 1}/${selected.length} 张` });
       try {
-        // 通过后端代理下载图片（避免防盗链 403）
-        const temp = await new Promise((ok, fail) => {
-          wx.downloadFile({ url: img.proxy, success: ok, fail });
-        });
-        if (temp.statusCode !== 200) { failed++; continue; }
-
-        // 保存到相册
-        try {
-          await wx.saveImageToPhotosAlbum({ filePath: temp.tempFilePath });
-          saved++;
-        } catch (authErr) {
-          try { await wx.authorize({ scope: 'scope.writePhotosAlbum' }); } catch {
-            wx.showToast({ title: '请在设置中开启相册权限', icon: 'none' });
-            this.setData({ saving: false, downloading: false });
-            return;
-          }
-          await wx.saveImageToPhotosAlbum({ filePath: temp.tempFilePath });
-          saved++;
-        }
+        await wx.saveImageToPhotosAlbum({ filePath: tempFiles[i] });
+        saved++;
       } catch (err) {
-        console.error('[album] 保存图片失败:', err);
+        console.error('[album] 保存失败:', err);
         failed++;
       }
     }
