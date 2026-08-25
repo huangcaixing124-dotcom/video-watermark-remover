@@ -641,12 +641,48 @@ router.get('/image', async (req, res) => {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Referer': referer,
       },
-      timeout: 15000,
+      timeout: 20000,
     }, (proxyRes) => {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Content-Type', proxyRes.headers['content-type'] || 'image/jpeg');
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      proxyRes.pipe(res);
+      // 收集图片字节，判断格式；WebP 等小程序不支持的格式用 ffmpeg 转成 JPEG
+      const chunks = [];
+      let size = 0;
+      proxyRes.on('data', c => { chunks.push(c); size += c.length; });
+      proxyRes.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        const ct = proxyRes.headers['content-type'] || '';
+        const isWebp = ct.includes('webp') || (buf.length > 11 && buf.slice(0, 4).toString() === 'RIFF' && buf.slice(8, 12).toString() === 'WEBP');
+
+        if (!isWebp) {
+          // 非 WebP 直接透传
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Content-Type', ct || 'image/jpeg');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          return res.end(buf);
+        }
+
+        // WebP → JPEG（小程序部分系统不支持 WebP 显示）
+        const { spawn } = require('child_process');
+        const ff = spawn('ffmpeg', ['-y', '-i', '-', '-f', 'image2', '-q:v', '2', 'pipe:1'], { stdio: ['pipe', 'pipe', 'ignore'] });
+        const outChunks = [];
+        ff.stdout.on('data', c => outChunks.push(c));
+        ff.on('close', (code) => {
+          if (code === 0 && outChunks.length > 0) {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Content-Type', 'image/jpeg');
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+            res.end(Buffer.concat(outChunks));
+          } else {
+            // 转换失败则回退返回原始 WebP（至少前端能尝试）
+            console.warn(`[image-proxy] WebP转JPEG失败, code=${code}`);
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Content-Type', 'image/webp');
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+            res.end(buf);
+          }
+        });
+        ff.stdin.write(buf);
+        ff.stdin.end();
+      });
     }).on('error', (err) => {
       console.error(`[image-proxy] Error: ${err.message}`);
       res.status(502).json({ error: '图片代理失败' });
