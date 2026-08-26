@@ -18,7 +18,7 @@ const router = express.Router();
 const { getVideoInfo, downloadVideo, extractWithPython } = require('../services/ytdlp');
 const { getPlayInfo, extractVideoId, isDoubaoUrl } = require('../services/doubao');
 const { getVideoInfo: getKuaishouInfo } = require('../services/kuaishou');
-const { createTask, getTask, getTaskFile, startCleanup } = require('../services/downloader');
+const { createTask, getTask, getTaskFile, getTaskFileFromDisk, startCleanup } = require('../services/downloader');
 const { extractVideo: playwrightExtract } = require('../services/playwrightService');
 const bridgeQueue = require('../services/bridgeQueue');
 const config = require('../config');
@@ -466,6 +466,79 @@ router.get('/file/:id', async (req, res) => {
     return res.status(404).json({ error: '视频文件已过期' });
   }
   res.sendFile(filePath);
+});
+
+/**
+ * 获取下载文件信息（大小），用于小程序判断走 Worker 还是直连。
+ * GET /api/video/file-info/:id
+ */
+router.get('/file-info/:id', (req, res) => {
+  const taskId = req.params.id;
+  // 优先从内存任务取，任务已清理则从磁盘取
+  let filePath = getTaskFile(taskId) || getTaskFileFromDisk(taskId);
+  if (!filePath) {
+    return res.status(404).json({ error: '视频文件不存在或未完成' });
+  }
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: '视频文件已过期' });
+  }
+  const stat = fs.statSync(filePath);
+  const sizeMB = Math.round(stat.size / 1024 / 1024 * 100) / 100;
+  res.json({
+    size: stat.size,
+    sizeMB,
+    // 超过 80MB 建议走公网直连（避开 Cloudflare Worker 100MB 限制）
+    recommendDirect: stat.size > 80 * 1024 * 1024,
+    directUrl: `/api/video/file-direct/${taskId}`,
+  });
+});
+
+/**
+ * 公网直连下载（绕过 Cloudflare Worker 100MB 限制）。
+ * 支持 HTTP Range 断点续传。
+ * GET /api/video/file-direct/:id
+ */
+router.get('/file-direct/:id', (req, res) => {
+  const taskId = req.params.id;
+  // 优先从内存任务取，任务已清理则从磁盘取
+  let filePath = getTaskFile(taskId) || getTaskFileFromDisk(taskId);
+  if (!filePath) {
+    return res.status(404).json({ error: '视频文件不存在或未完成' });
+  }
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: '视频文件已过期' });
+  }
+
+  const stat = fs.statSync(filePath);
+  const range = req.headers.range;
+
+  // 允许跨域
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  // 支持 Range 请求（断点续传 / 分片下载）
+  if (range) {
+    const matches = range.match(/bytes=(\d+)-(\d*)/);
+    if (matches) {
+      const start = parseInt(matches[1], 10);
+      const end = matches[2] ? parseInt(matches[2], 10) : stat.size - 1;
+      const chunkSize = end - start + 1;
+      if (start >= stat.size || start > end) {
+        res.setHeader('Content-Range', `bytes */${stat.size}`);
+        return res.status(416).end();
+      }
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Length', chunkSize);
+      res.status(206);
+      return fs.createReadStream(filePath, { start, end }).pipe(res);
+    }
+  }
+
+  // 完整下载
+  res.setHeader('Content-Length', stat.size);
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
+  fs.createReadStream(filePath).pipe(res);
 });
 
 /**

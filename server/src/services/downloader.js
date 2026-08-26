@@ -130,6 +130,28 @@ function getTaskFile(taskId) {
   return task.filePath;
 }
 
+/**
+ * 直接从磁盘查找任务文件（即使内存中的任务已被清理也能找到）。
+ * 搜索 {cacheDir}/downloads/{taskId}/ 下的视频文件。
+ */
+function getTaskFileFromDisk(taskId) {
+  const dir = path.join(DOWNLOAD_DIR, taskId);
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return null;
+  try {
+    const files = fs.readdirSync(dir).filter(f => /\.(mp4|mkv|webm|mov)$/i.test(f));
+    if (files.length === 0) return null;
+    // 选择最大文件
+    files.sort((a, b) => {
+      const sa = fs.statSync(path.join(dir, a)).size;
+      const sb = fs.statSync(path.join(dir, b)).size;
+      return sb - sa;
+    });
+    return path.join(dir, files[0]);
+  } catch {
+    return null;
+  }
+}
+
 /** Cleanup old completed/failed tasks. */
 function cleanup() {
   const now = Date.now();
@@ -161,4 +183,4 @@ function startCleanup() {
   setInterval(cleanup, config.taskCleanupIntervalSeconds * 1000);
 }
 
-module.exports = { createTask, getTask, getTaskFile, startCleanup };
+module.exports = { createTask, getTask, getTaskFile, getTaskFileFromDisk, startCleanup };
