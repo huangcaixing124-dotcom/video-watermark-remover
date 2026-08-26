@@ -8,12 +8,37 @@ App({
     this.applyTheme(darkMode);
     this.checkConnection(apiBase);
     this.loadHistory();
+    this.checkForUpdate();
   },
 
   setApiBase(url) {
     this.globalData.apiBase = url;
     wx.setStorageSync('api_base', url);
     this.checkConnection(url);
+  },
+
+  // ── 版本更新检查（仅真机/体验版生效，开发者工具不触发）──
+  checkForUpdate() {
+    // 基础库/低版本可能不支持 wx.getUpdateManager，合规降级为静默
+    if (typeof wx.getUpdateManager !== 'function') return;
+    const um = wx.getUpdateManager();
+    um.onUpdateReady(() => {
+      wx.showModal({
+        title: '版本更新',
+        content: '检测到新版本，是否立即重启应用？',
+        showCancel: false, // 不显示取消，避免用户一直停留在旧版
+        confirmText: '立即更新',
+        success: (res) => {
+          if (res.confirm) {
+            um.applyUpdate(); // 强制重启并加载新版本
+          }
+        },
+      });
+    });
+    um.onUpdateFailed(() => {
+      // 新版下载失败，静默处理，下次冷启动再试
+      console.warn('[update] 新版本下载失败，将沿用当前版本');
+    });
   },
 
   checkConnection(url) {

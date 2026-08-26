@@ -463,7 +463,9 @@ function downloadFromUrl(videoUrl, outputPath, options) {
     ];
 
     const proc = spawn('ffmpeg', args, {
-      stdio: ['pipe', 'ignore', 'pipe'],
+      // [-progress pipe:1] 进度走 stdout，故 stdout/stderr 必须为 pipe；
+      // 若设成 ignore，proc.stdout 为 null，下方 .on('data') 会抛 "Cannot read properties of null (reading 'on')"
+      stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 0, // 不限时
       windowsHide: true,
     });
@@ -471,6 +473,8 @@ function downloadFromUrl(videoUrl, outputPath, options) {
     let stderr = '';
     // 解析 ffmpeg -progress 输出，估算下载进度
     let totalMs = null;      // 输入总时长（毫秒）
+    let lastReportedPct = 0; // 已上报的最大进度，保证单调递增
+    let lastOutTimeMs = 0;   // 最近一次解析到的 out_time_ms（避免只取第一个导致进度卡死）
     let progressCb = typeof options.progressCb === 'function' ? options.progressCb : null;
 
     proc.stderr.on('data', (chunk) => {
@@ -486,14 +490,21 @@ function downloadFromUrl(videoUrl, outputPath, options) {
     });
 
     // -progress pipe:1 输出到 stdout，解析 out_time_ms
+    // 注意：ffmpeg 会持续输出多行 out_time_ms，必须取"最后/最新"的值，
+    // 否则 String.match 永远命中第一个（接近 0），导致大视频进度卡死在早期，无法喂给 task。
     let stdoutBuf = '';
     proc.stdout.on('data', (chunk) => {
       stdoutBuf += chunk.toString();
       if (progressCb && totalMs > 0) {
-        const tm = stdoutBuf.match(/out_time_ms=(\d+)/);
-        if (tm) {
-          const pct = Math.min(99, Math.round((+tm[1]) / totalMs * 100));
-          progressCb(pct);
+        // 只扫描本次新增片段（增量），用 matchAll 取最后一个 out_time_ms
+        const matches = [...chunk.toString().matchAll(/out_time_ms=(\d+)/g)];
+        if (matches.length > 0) {
+          lastOutTimeMs = +matches[matches.length - 1][1];
+          const pct = Math.min(99, Math.round(lastOutTimeMs / totalMs * 100));
+          if (pct > lastReportedPct) {
+            lastReportedPct = pct;
+            progressCb(pct);
+          }
         }
       }
     });
@@ -636,4 +647,4 @@ function _platformLabel(extractor) {
   return labels[extractor?.toUpperCase()] || extractor || '其他';
 }
 
-module.exports = { getVideoInfo, downloadVideo, extractAudio, downloadFromUrl, extractWithPython };
+module.exports = { getVideoInfo, downloadVideo, extractAudio, downloadFromUrl, extractWithPython, isRetryableError };

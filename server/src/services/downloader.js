@@ -7,7 +7,7 @@
 const path = require('path');
 const fs = require('fs');
 const { generateId, sleep, estimateSizeMB } = require('../utils/helpers');
-const { downloadVideo } = require('./ytdlp');
+const { downloadVideo, isRetryableError } = require('./ytdlp');
 const { runWatermarkRemoval } = require('./bridgeQueue');
 const config = require('../config');
 
@@ -55,11 +55,11 @@ async function startDownload(taskId) {
   activeDownloads++;
   task.status = 'downloading';
 
-  try {
-    const outputDir = path.join(DOWNLOAD_DIR, taskId);
-    fs.mkdirSync(outputDir, { recursive: true });
+  const outputDir = path.join(DOWNLOAD_DIR, taskId);
+  fs.mkdirSync(outputDir, { recursive: true });
 
-    // Build options for downloadVideo
+  // 构建下载选项（进度回调只在 downloading 状态更新，重试期间对用户无感知）
+  const buildOptions = () => {
     const downloadOptions = { progressCb: (pct) => {
       if (task && task.status === 'downloading') {
         task.progress = Math.max(task.progress, Math.min(99, pct));
@@ -67,44 +67,78 @@ async function startDownload(taskId) {
     } };
     if (task.directUrl) {
       downloadOptions.directUrl = task.directUrl;
+    }
+    return downloadOptions;
+  };
+
+  // 静默整体重试：最多尝试 3 次（首次 + 2 次重试）。
+  // 只有可重试错误（SSL/连接重置/超时等网络波动）才重试；
+  // 不可重试错误（视频不存在、格式不支持等）直接失败。
+  // 重试期间用户可见状态保持 downloading，仅第 3 次彻底失败后置为 failed。
+  const MAX_ATTEMPTS = 3;
+  let lastErr = null;
+  let success = false;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (task.directUrl && attempt === 1) {
       console.log(`[downloader] Using direct URL for task ${taskId}`);
     }
+    if (attempt > 1) {
+      // 重试前清空上次残留的输出文件，避免污染/误判
+      try { fs.rmSync(outputDir, { recursive: true, force: true }); } catch {}
+      fs.mkdirSync(outputDir, { recursive: true });
+      // 退避等待（1s, 2s），静默不打扰用户
+      await sleep((attempt - 1) * 1000);
+      console.log(`[downloader] 任务 ${taskId} 第 ${attempt}/${MAX_ATTEMPTS} 次尝试下载（上次: ${lastErr?.message}）`);
+    }
 
-    const result = await downloadVideo(task.url, outputDir, downloadOptions);
+    try {
+      const result = await downloadVideo(task.url, outputDir, buildOptions());
+      task.filePath = result.filePath;
 
-    task.filePath = result.filePath;
-
-    // 尝试去除水印
-    if (task.url) {
-      let cleanedPath = null;
-      try {
-        if (task.url.includes('doubao.com')) {
-          cleanedPath = path.join(outputDir, 'cleaned.mp4');
-          await runWatermarkRemoval(result.filePath, cleanedPath);
-        } else if (task.url.includes('kuaishou.com')) {
-          // 快手视频 url 来自桥接扩展，已经是无水印的 CDN 链接，无需额外处理
-          cleanedPath = null;
+      // 尝试去除水印
+      if (task.url) {
+        let cleanedPath = null;
+        try {
+          if (task.url.includes('doubao.com')) {
+            cleanedPath = path.join(outputDir, 'cleaned.mp4');
+            await runWatermarkRemoval(result.filePath, cleanedPath);
+          } else if (task.url.includes('kuaishou.com')) {
+            // 快手视频 url 来自桥接扩展，已经是无水印的 CDN 链接，无需额外处理
+            cleanedPath = null;
+          }
+          if (cleanedPath && fs.existsSync(cleanedPath) && fs.statSync(cleanedPath).size > 1000) {
+            task.filePath = cleanedPath;
+            console.log(`[downloader] Watermark removed for task ${taskId}`);
+          }
+        } catch (wmErr) {
+          console.error(`[downloader] Watermark removal failed: ${wmErr.message}`);
         }
-        if (cleanedPath && fs.existsSync(cleanedPath) && fs.statSync(cleanedPath).size > 1000) {
-          task.filePath = cleanedPath;
-          console.log(`[downloader] Watermark removed for task ${taskId}`);
-        }
-      } catch (wmErr) {
-        console.error(`[downloader] Watermark removal failed: ${wmErr.message}`);
       }
-    }
 
-    task.status = 'completed';
-    task.progress = 100;
-  } catch (err) {
-    const existing = tasks.get(taskId);
-    if (existing) {
-      existing.status = 'failed';
-      existing.error = err.message.slice(0, 500);
+      task.status = 'completed';
+      task.progress = 100;
+      success = true;
+      break;
+    } catch (err) {
+      lastErr = err;
+      // 非可重试错误立即失败，不再重试
+      if (!isRetryableError(err)) {
+        console.log(`[downloader] 任务 ${taskId} 下载遇到不可重试错误，直接失败: ${err.message}`);
+        break;
+      }
+      // 可重试错误：若还有次数则继续循环重试
+      console.log(`[downloader] 任务 ${taskId} 下载失败(可重试): ${err.message}`);
     }
-  } finally {
-    activeDownloads--;
   }
+
+  if (!success) {
+    console.error(`[downloader] 任务 ${taskId} 尝试 ${MAX_ATTEMPTS} 次后仍失败: ${lastErr?.message}`);
+    task.status = 'failed';
+    task.error = (lastErr?.message || '下载失败').slice(0, 500);
+  }
+
+  activeDownloads--;
 }
 
 /** Get task status. */
