@@ -90,6 +90,8 @@ App({
 
   globalData: {
     apiBase: 'https://api.hcxserver.xyz',
+    // 大文件直连域名（公网IP + HTTPS），需在路由器做端口转发并配证书
+    directBase: 'https://direct.hcxserver.xyz',
     connected: false,
     isDark: false,
     darkMode: 'auto',

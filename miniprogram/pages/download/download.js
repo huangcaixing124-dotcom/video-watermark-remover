@@ -1,5 +1,5 @@
 // pages/download/download.js
-const { extractUrl, detectPlatform, post, pollTask, secureUrl, proxyImage } = require('../../utils/api');
+const { extractUrl, detectPlatform, post, get, pollTask, secureUrl, proxyImage } = require('../../utils/api');
 const { checkText } = require('../../utils/security');
 
 Page({
@@ -187,7 +187,7 @@ Page({
   },
 
   // 后台缓存视频到手机，完成后才显示下载完成
-  // 长视频大文件传输时家庭宽带上行易波动，失败自动重试，避免一次失败就报错
+  // 大文件走直连（绕过 Worker 100MB 限制），小文件走 Worker；失败自动重试
   _cacheToPhone(taskId) {
     return new Promise((resolve) => {
       this._cachingInProgress = true;
@@ -196,11 +196,26 @@ Page({
       this.setData({ statusText: '正在传输到手机...', statusHint: '缓存中', saving: true });
 
       const apiBase = getApp().globalData.apiBase;
-      const url = `${apiBase}/api/video/file/${taskId}`;
       const MAX_RETRY = 3;
 
+      // 先查询文件信息，决定下载路径
+      const resolveUrl = async () => {
+        try {
+          const info = await get(`/api/video/file-info/${taskId}`);
+          const useDirect = info.recommendDirect && getApp().globalData.directBase;
+          if (useDirect) {
+            const directBase = getApp().globalData.directBase;
+            return `${directBase}${info.directUrl}`;
+          }
+          return `${apiBase}/api/video/file/${taskId}`;
+        } catch {
+          // 查询失败，回退到 Worker 路径
+          return `${apiBase}/api/video/file/${taskId}`;
+        }
+      };
+
       // 单次下载，返回 Promise<成功与否>
-      const attemptDownload = () => new Promise((done) => {
+      const attemptDownload = (url) => new Promise((done) => {
         let finished = false;
         const downloadTask = wx.downloadFile({
           url,
@@ -231,11 +246,12 @@ Page({
 
       // 带重试的下载
       (async () => {
+        const url = await resolveUrl();
         for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
           if (attempt > 1) {
             this.setData({ statusHint: `重试第 ${attempt - 1}/${MAX_RETRY - 1} 次...` });
           }
-          const result = await attemptDownload();
+          const result = await attemptDownload(url);
 
           if (result.ok) {
             // 下载成功
