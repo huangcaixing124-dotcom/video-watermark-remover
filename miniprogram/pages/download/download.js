@@ -300,35 +300,50 @@ Page({
       // 单文件下载（小文件用 wx.downloadFile，速度快）
       const attemptDownload = (url) => new Promise((done) => {
         let finished = false;
-        const downloadTask = wx.downloadFile({
-          url,
-          timeout: 300000,
-          success: (res) => {
-            if (finished) return;
-            finished = true;
-            if (res.statusCode === 200) {
-              this._precachePath = res.tempFilePath;
-              done({ ok: true });
-            } else if (res.statusCode === 404) {
-              done({ ok: false, expired: true });
-            } else {
-              done({ ok: false });
-            }
-          },
-          fail: (err) => {
-            if (finished) return;
-            finished = true;
-            console.error('[cache] 单次下载失败:', err);
-            done({ ok: false });
-          },
-        });
+        let progressTimer = null;
+        // 用定时器模拟进度（不依赖 downloadTask.onProgressUpdate，避免某些基础库版本崩溃）
+        const startFakeProgress = () => {
+          let fakePct = 90;
+          progressTimer = setInterval(() => {
+            if (finished) { clearInterval(progressTimer); return; }
+            fakePct = Math.min(99, fakePct + 1);
+            this.setData({ progress: fakePct, statusText: '正在传输到手机...' });
+          }, 500);
+        };
 
-        // 防御: downloadTask 可能为 null（异常情况），避免 .on 崩溃
-        if (downloadTask && typeof downloadTask.onProgressUpdate === 'function') {
-          downloadTask.onProgressUpdate((res) => {
-            this.setData({ progress: Math.min(99, 90 + Math.floor(res.progress * 0.09 * 100)) });
+        try {
+          const downloadTask = wx.downloadFile({
+            url,
+            timeout: 300000,
+            success: (res) => {
+              if (finished) return;
+              finished = true;
+              if (progressTimer) clearInterval(progressTimer);
+              if (res.statusCode === 200) {
+                this._precachePath = res.tempFilePath;
+                done({ ok: true });
+              } else if (res.statusCode === 404) {
+                done({ ok: false, expired: true });
+              } else {
+                done({ ok: false });
+              }
+            },
+            fail: (err) => {
+              if (finished) return;
+              finished = true;
+              if (progressTimer) clearInterval(progressTimer);
+              console.error('[cache] 单次下载失败:', err);
+              done({ ok: false });
+            },
           });
+        } catch (e) {
+          console.error('[cache] downloadFile 启动异常:', e);
+          done({ ok: false });
+          return;
         }
+
+        // 启动模拟进度（不依赖 downloadTask.onProgressUpdate，避免基础库版本崩溃）
+        startFakeProgress();
       });
 
       // 带重试的下载（根据文件大小选择单文件或分片下载）
