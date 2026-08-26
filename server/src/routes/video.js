@@ -805,11 +805,36 @@ router.post('/album/info', async (req, res) => {
       };
     }
 
-    res.json({ success: true, data: result });
+    if (result && result.title) {
+      result.title = result.title.replace(/[\uD800-\uDFFF]/g, '').replace(/�/g, '');
+    }
+    if (result && result.description) {
+      result.description = result.description.replace(/[\uD800-\uDFFF]/g, '').replace(/�/g, '');
+    }
+    res.json({ success: true, data: cleanSurrogates(result) });
+    console.log(`[album] response sent for ${platLabel}, images=${result.imageCount || 0}`);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
+
+/** 清洗字符串中的无效 UTF-16 代理对（surrogate pair），避免小程序显示乱码 */
+function cleanSurrogates(obj) {
+  if (typeof obj === 'string') {
+    return obj.replace(/[\uD800-\uDFFF]/g, '');
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(cleanSurrogates);
+  }
+  if (obj && typeof obj === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = cleanSurrogates(v);
+    }
+    return out;
+  }
+  return obj;
+}
 
 /**
  * 小红书图文笔记提取 — 纯 HTTP 解析 window.__INITIAL_STATE__。

@@ -268,18 +268,35 @@ def extract_douyin(page, url):
         """)
 
         if images:
-            # 用 meta[name=description] 作为文案（比 title 更完整，含完整描述），否则用 title
+            # 从 meta 提取标题和文案
+            title = ''
             desc = ''
             try:
-                desc_el = page.query_selector('meta[name="description"]')
-                if desc_el:
-                    desc = desc_el.get_attribute('content') or ''
+                # 优先用 page title（最可靠，含完整标题）
+                raw_title = page.title() or ''
+                if raw_title:
+                    # 去掉末尾的 - 抖音 等平台后缀
+                    parts = raw_title.split(' - ')
+                    if parts:
+                        title = parts[0].strip()
+                # og:description 作为文案（含完整描述）
+                og_desc = page.query_selector('meta[property="og:description"]')
+                if og_desc:
+                    desc = og_desc.get_attribute('content') or ''
+                if not desc:
+                    desc_el = page.query_selector('meta[name="description"]')
+                    if desc_el:
+                        desc = desc_el.get_attribute('content') or ''
+                if not desc:
+                    desc = raw_title
+                if not title:
+                    title = '抖音图文'
             except Exception:
                 pass
             if not desc:
-                desc = page.title() or ''
+                desc = title
             return {
-                'title': page.title() or '抖音图文',
+                'title': title,
                 'author': '',
                 'content_type': 'image_set',
                 'images': images,
@@ -539,6 +556,20 @@ EXTRACTORS = {
 }
 
 
+# 清洗字符串中的无效 UTF-16 代理对和不可见控制字符，确保 JSON 输出干净
+def _clean_utf8(text):
+    if not isinstance(text, str):
+        return text
+    try:
+        # 1. 用 surrogateescape 编码，再解码为 replace（替换无效字符）
+        cleaned = text.encode('utf-8', errors='surrogateescape').decode('utf-8', errors='replace')
+        # 2. 去掉 \x00-\x08 控制字符和 \x0b-\x0c、\x0e-\x1f 等（保留 \t \n \r）
+        import re as _re
+        cleaned = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\xad]', '', cleaned)
+        return cleaned
+    except Exception:
+        return text.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({"error": "Usage: python extract_video.py <url>"}))
@@ -645,7 +676,16 @@ def main():
         except:
             pass
 
-    print(json.dumps(result, ensure_ascii=False))
+    # 清洗所有字符串字段，清除无效代理对
+    if isinstance(result, dict):
+        for k in list(result.keys()):
+            if isinstance(result[k], str):
+                result[k] = _clean_utf8(result[k])
+            elif isinstance(result[k], list):
+                result[k] = [_clean_utf8(v) if isinstance(v, str) else v for v in result[k]]
+
+    # 用 sys.stdout.buffer.write 确保 UTF-8 编码输出（避免 Windows GBK 干扰）
+    sys.stdout.buffer.write(json.dumps(result, ensure_ascii=False).encode('utf-8'))
 
 
 if __name__ == '__main__':
