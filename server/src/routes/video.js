@@ -487,11 +487,113 @@ router.get('/file-info/:id', (req, res) => {
   res.json({
     size: stat.size,
     sizeMB,
-    // 超过 80MB 建议走公网直连（避开 Cloudflare Worker 100MB 限制）
-    recommendDirect: stat.size > 80 * 1024 * 1024,
-    directUrl: `/api/video/file-direct/${taskId}`,
+    // 超过 80MB 需要压缩画质（避开 Cloudflare Worker 100MB 限制）
+    needCompress: stat.size > 80 * 1024 * 1024,
   });
 });
+
+/**
+ * 压缩下载（大文件 >80MB 时用 ffmpeg 压缩到 <80MB）。
+ * 压缩版缓存到磁盘，避免重复压缩。
+ * GET /api/video/file-compressed/:id
+ */
+router.get('/file-compressed/:id', async (req, res) => {
+  const taskId = req.params.id;
+  const filePath = getTaskFile(taskId) || getTaskFileFromDisk(taskId);
+  if (!filePath) {
+    return res.status(404).json({ error: '视频文件不存在或未完成' });
+  }
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: '视频文件已过期' });
+  }
+
+  // 小于 80MB 的文件无需压缩，直接返回原文件
+  const originSize = fs.statSync(filePath).size;
+  if (originSize <= 80 * 1024 * 1024) {
+    return res.sendFile(filePath);
+  }
+
+  // 压缩缓存目录
+  const compressedDir = path.join(config.cacheDir, 'compressed');
+  fs.mkdirSync(compressedDir, { recursive: true });
+  const compressedPath = path.join(compressedDir, `${taskId}.mp4`);
+
+  try {
+    // 已有压缩缓存，直接返回
+    if (fs.existsSync(compressedPath) && fs.statSync(compressedPath).size > 1000) {
+      console.log(`[compress] Serving cached compressed file: ${compressedPath}`);
+      return res.sendFile(compressedPath);
+    }
+
+    // 用 ffprobe 获取时长，计算目标码率（目标 ~75MB）
+    const duration = await getVideoDuration(filePath);
+    const targetBits = 75 * 1024 * 1024 * 8; // 75MB → bits
+    let videoBitrate = 1200; // 默认 1.2Mbps，如果时长为 0
+    if (duration > 0) {
+      // 视频码率 = 总目标码率 - 音频码率(96k) - 容器开销
+      const totalKbps = targetBits / duration / 1000;
+      videoBitrate = Math.max(200, Math.floor(totalKbps * 0.9 - 96));
+    }
+
+    console.log(`[compress] Compressing ${filePath} (duration=${duration}s, bitrate=${videoBitrate}k)`);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    const { spawn } = require('child_process');
+    const args = [
+      '-y',
+      '-i', filePath,
+      '-c:v', 'libx264',
+      '-b:v', `${videoBitrate}k`,
+      '-maxrate', `${Math.floor(videoBitrate * 1.2)}k`,
+      '-bufsize', `${Math.floor(videoBitrate * 2)}k`,
+      '-c:a', 'aac',
+      '-b:a', '96k',
+      '-vf', "scale='min(1280,iw)':-2",
+      '-movflags', '+faststart',
+      compressedPath,
+    ];
+
+    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+    let stderr = '';
+    proc.stderr.on('data', (c) => { stderr += c.toString(); });
+
+    proc.on('close', (code) => {
+      if (code === 0 && fs.existsSync(compressedPath)) {
+        console.log(`[compress] Done: ${compressedPath} (${fs.statSync(compressedPath).size} bytes)`);
+        res.sendFile(compressedPath);
+      } else {
+        console.error(`[compress] Failed: ${stderr.slice(-300)}`);
+        // 压缩失败，回退返回原文件
+        res.sendFile(filePath);
+      }
+    });
+
+    proc.on('error', (err) => {
+      console.error(`[compress] spawn error: ${err.message}`);
+      res.sendFile(filePath);
+    });
+  } catch (err) {
+    console.error(`[compress] Error: ${err.message}`);
+    res.sendFile(filePath);
+  }
+});
+
+/** 用 ffprobe 获取视频时长（秒） */
+function getVideoDuration(filePath) {
+  return new Promise((resolve) => {
+    const { execFile } = require('child_process');
+    execFile('ffprobe', [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      filePath,
+    ], { timeout: 30000, windowsHide: true }, (err, stdout) => {
+      if (err) return resolve(0);
+      const d = parseFloat(stdout.toString().trim());
+      resolve(isNaN(d) ? 0 : d);
+    });
+  });
+}
 
 /**
  * 公网直连下载（绕过 Cloudflare Worker 100MB 限制）。

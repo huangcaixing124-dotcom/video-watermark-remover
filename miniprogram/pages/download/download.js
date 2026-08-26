@@ -187,7 +187,7 @@ Page({
   },
 
   // 后台缓存视频到手机，完成后才显示下载完成
-  // 大文件走直连（绕过 Worker 100MB 限制），小文件走 Worker；失败自动重试
+  // 大文件(>80MB)走压缩接口，小文件走原接口；失败自动重试
   _cacheToPhone(taskId) {
     return new Promise((resolve) => {
       this._cachingInProgress = true;
@@ -198,18 +198,16 @@ Page({
       const apiBase = getApp().globalData.apiBase;
       const MAX_RETRY = 3;
 
-      // 先查询文件信息，决定下载路径
+      // 先查询文件信息，决定是否走压缩
       const resolveUrl = async () => {
         try {
           const info = await get(`/api/video/file-info/${taskId}`);
-          const useDirect = info.recommendDirect && getApp().globalData.directBase;
-          if (useDirect) {
-            const directBase = getApp().globalData.directBase;
-            return `${directBase}${info.directUrl}`;
+          if (info.needCompress) {
+            this.setData({ statusHint: '文件较大，正在压缩画质...' });
+            return `${apiBase}/api/video/file-compressed/${taskId}`;
           }
           return `${apiBase}/api/video/file/${taskId}`;
         } catch {
-          // 查询失败，回退到 Worker 路径
           return `${apiBase}/api/video/file/${taskId}`;
         }
       };
@@ -219,6 +217,7 @@ Page({
         let finished = false;
         const downloadTask = wx.downloadFile({
           url,
+          timeout: 300000, // 压缩大文件需要时间，超时给 5 分钟
           success: (res) => {
             if (finished) return;
             finished = true;
