@@ -118,6 +118,8 @@ async function extractVideo(url, options = {}) {
       result = await extractDouyin(page, url, timeout);
     } else if (url.includes('xiaohongshu.com') || url.includes('xhslink.com') || url.includes('xhslink.cn')) {
       result = await extractXiaohongshu(page, url, timeout);
+    } else if (url.includes('weibo.com') || url.includes('weibo.cn')) {
+      result = await extractWeibo(page, url, timeout);
     } else {
       throw new Error('不支持的平台');
     }
@@ -364,6 +366,53 @@ async function extractXiaohongshu(page, url, timeout) {
   }
 
   return { videoUrl, title: videoTitle, author, platform: '小红书' };
+}
+
+/**
+ * 微博提取 — 打开页面，从 video 元素或页面数据中提取视频 URL。
+ */
+async function extractWeibo(page, url, timeout) {
+  let videoUrl = null;
+  let videoTitle = '';
+  let author = '';
+
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {
+    console.log('[playwright] Weibo page load timeout, continuing with loaded data');
+  });
+  await page.waitForTimeout(3000);
+
+  // 从页面 DOM 提取视频
+  videoUrl = await page.evaluate(() => {
+    // 1. video 元素
+    const v = document.querySelector('video');
+    if (v && v.src) return v.src;
+    const s = document.querySelector('video source');
+    if (s && s.src) return s.src;
+    // 2. 页面中 video_url 数据
+    const scripts = document.querySelectorAll('script');
+    for (const sc of scripts) {
+      const text = sc.textContent || '';
+      // 匹配 video_url 或 mp4 链接
+      const m = text.match(/video_url["']?\s*[:=]\s*["']([^"']+\.mp4[^"']*)["']/);
+      if (m) return m[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+    }
+    // 3. 视频 URL 正则
+    const html = document.documentElement.innerHTML;
+    const m = html.match(/https?:\/\/[^"'\s]+\.mp4[^"'\s]*/);
+    if (m) return m[0];
+    return null;
+  }).catch(() => null);
+
+  // 提取标题
+  try {
+    videoTitle = await page.evaluate(() => {
+      const t = document.querySelector('title');
+      if (t) return t.textContent?.split(' - ')[0]?.trim() || '';
+      return '';
+    });
+  } catch {}
+
+  return { videoUrl, title: videoTitle, author, platform: '微博' };
 }
 
 module.exports = { extractVideo, closeBrowser, getBrowser };

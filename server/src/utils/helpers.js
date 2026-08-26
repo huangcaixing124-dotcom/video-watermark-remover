@@ -45,7 +45,7 @@ function detectPlatform(url) {
   if (url.includes('bilibili.com')) return { platform: 'bilibili', label: 'B站', needsBridge: false };
   if (url.includes('youtube.com') || url.includes('youtu.be')) return { platform: 'youtube', label: 'YouTube', needsBridge: false };
   if (url.includes('tiktok.com')) return { platform: 'tiktok', label: 'TikTok', needsBridge: false };
-  if (url.includes('weibo.com') || url.includes('weibo.cn')) return { platform: 'weibo', label: '微博', needsBridge: false };
+  if (url.includes('weibo.com') || url.includes('weibo.cn')) return { platform: 'weibo', label: '微博', needsBridge: true };
   if (url.includes('jimeng') || url.includes('jimeng.com')) return { platform: 'jimeng', label: '即梦', needsBridge: false };
   return { platform: 'other', label: '其他', needsBridge: false };
 }

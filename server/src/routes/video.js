@@ -50,6 +50,7 @@ router.get('/platforms', (req, res) => {
       { key: 'youtube', name: 'YouTube', desc: '支持YouTube视频' },
       { key: 'doubao', name: '豆包', desc: '支持豆包AI视频' },
       { key: 'jimeng', name: '即梦', desc: '支持即梦AI视频' },
+      { key: 'weibo', name: '微博', desc: '支持微博视频下载' },
     ],
   });
 });
@@ -72,18 +73,18 @@ router.post('/info', async (req, res) => {
         const videoId = extractVideoId(url);
         if (!videoId) throw new Error('无法从链接中提取 video_id');
         info = await getPlayInfo(videoId);
-      } else if (platKey === 'kuaishou') {
+      } else if (platKey === 'kuaishou' || platKey === 'weibo') {
         // 先尝试 Playwright 无头浏览器提取
         try {
           const pwResult = await playwrightExtract(url, { timeout: 30000 });
           if (pwResult && pwResult.videoUrl) {
             info = {
-              title: pwResult.title || '快手视频',
+              title: pwResult.title || (platKey === 'kuaishou' ? '快手视频' : '微博视频'),
               author: '',
               duration: 0,
               thumbnailUrl: null,
               directUrl: pwResult.videoUrl,
-              platformLabel: '快手',
+              platformLabel: platKey === 'kuaishou' ? '快手' : '微博',
               videoId: '',
               webpageUrl: url,
               hasOriginal: false,
@@ -92,8 +93,8 @@ router.post('/info', async (req, res) => {
             throw new Error('Playwright 未能提取到视频');
           }
         } catch (pwErr) {
-          console.log(`[info] Playwright failed for Kuaishou: ${pwErr.message}, falling back to bridge`);
-          throw new Error('快手需要浏览器辅助解析');
+          console.log(`[info] Playwright failed for ${platLabel}: ${pwErr.message}, falling back to bridge`);
+          throw new Error(`${platLabel}需要浏览器辅助解析`);
         }
       } else {
         info = await getVideoInfo(url);
@@ -267,8 +268,8 @@ router.post('/download', async (req, res) => {
         const videoId = extractVideoId(url);
         if (!videoId) throw new Error('无法从链接中提取 video_id');
         info = await getPlayInfo(videoId);
-      } else if (platKey === 'kuaishou') {
-        info = await getKuaishouInfo(url);
+      } else if (platKey === 'kuaishou' || platKey === 'weibo') {
+        info = platKey === 'kuaishou' ? await getKuaishouInfo(url) : await getVideoInfo(url);
       } else {
         info = await getVideoInfo(url);
       }
