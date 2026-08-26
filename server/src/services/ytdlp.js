@@ -406,15 +406,20 @@ function downloadWithNodeJs(videoUrl, outputPath, options) {
       const fileStream = fs.createWriteStream(outputPath);
       const total = parseInt(res.headers['content-length'] || '0', 10);
       let downloaded = 0;
+      const progressCb = typeof options.progressCb === 'function' ? options.progressCb : null;
 
       res.on('data', (chunk) => {
         downloaded += chunk.length;
+        if (progressCb && total > 0) {
+          progressCb(Math.min(99, Math.round(downloaded / total * 100)));
+        }
       });
 
       res.pipe(fileStream);
 
       fileStream.on('finish', () => {
         fileStream.close();
+        if (progressCb) progressCb(100);
         console.log(`[nodejs] Download complete: ${outputPath} (${downloaded} bytes)`);
         resolve({ filePath: outputPath });
       });
@@ -523,6 +528,8 @@ function _downloadWithYtdlp(url, outputPath, options = {}) {
     const args = [
       '--no-warnings',
       '--no-playlist',
+      '--newline',
+      '--progress',
       '--merge-output-format', 'mp4',
       '-o', outputPath,
     ];
@@ -549,10 +556,23 @@ function _downloadWithYtdlp(url, outputPath, options = {}) {
     });
 
     let stderr = '';
-    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    let progressCb = typeof options.progressCb === 'function' ? options.progressCb : null;
+
+    // 解析 yt-dlp 进度输出: [download]  45.6% of  3.29MiB
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      if (progressCb) {
+        const m = chunk.toString().match(/\[download\]\s+(\d+(?:\.\d+)?)%/);
+        if (m) {
+          const pct = Math.min(99, Math.round(parseFloat(m[1])));
+          progressCb(pct);
+        }
+      }
+    });
 
     proc.on('close', (code) => {
       if (code === 0) {
+        if (progressCb) progressCb(100);
         // yt-dlp may output to a different extension; find the actual file
         const dir = path.dirname(outputPath);
         const baseName = path.basename(outputPath).replace('.%(ext)s', '').replace('.mp4', '');
