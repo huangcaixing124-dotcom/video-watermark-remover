@@ -48,6 +48,25 @@ Page({
     this.detectClipboard();
   },
 
+  // ── 分享 ──
+  onShareAppMessage() {
+    const info = this.data.noteInfo;
+    const count = this.data.imageCount;
+    return {
+      title: info ? `图文下载：${(info.title || '').slice(0, 30)}${(info.title || '').length > 30 ? '...' : ''} (${count}张)` : '图文下载 - 小红书/抖音图片笔记下载',
+      path: '/pages/album/album',
+    };
+  },
+
+  onShareTimeline() {
+    const info = this.data.noteInfo;
+    const count = this.data.imageCount;
+    return {
+      title: info ? `图文下载：${(info.title || '').slice(0, 30)}${(info.title || '').length > 30 ? '...' : ''} (${count}张)` : '图文下载 - 小红书/抖音图片笔记下载',
+      query: '',
+    };
+  },
+
   onThemeChange(d) { this.setData({ isDark: d }); },
 
   detectClipboard() {
