@@ -323,9 +323,12 @@ Page({
           },
         });
 
-        downloadTask.onProgressUpdate((res) => {
-          this.setData({ progress: Math.min(99, 90 + Math.floor(res.progress * 0.09 * 100)) });
-        });
+        // 防御: downloadTask 可能为 null（异常情况），避免 .on 崩溃
+        if (downloadTask && typeof downloadTask.onProgressUpdate === 'function') {
+          downloadTask.onProgressUpdate((res) => {
+            this.setData({ progress: Math.min(99, 90 + Math.floor(res.progress * 0.09 * 100)) });
+          });
+        }
       });
 
       // 带重试的下载（根据文件大小选择单文件或分片下载）
