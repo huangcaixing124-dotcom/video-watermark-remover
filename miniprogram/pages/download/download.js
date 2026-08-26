@@ -40,8 +40,9 @@ Page({
   },
 
   onShow() {
-    // 从后台切回前台时，立即检查任务状态（避免轮询延迟）
-    if (this.data.taskId && this.data.downloading) {
+    // 从后台切回前台时，检查任务状态（避免轮询延迟）
+    // 仅在"还没完成、还没失败"时才重新检查，避免重复下载
+    if (this.data.taskId && this.data.downloading && !this._downloadCompleted && !this._downloadFailed) {
       this._checkTaskNow();
     }
   },
@@ -49,8 +50,9 @@ Page({
   _checkTaskNow() {
     const taskId = this.data.taskId;
     if (!taskId) return;
-    // 防止重复调用 _cacheToPhone（已有缓存任务在运行）
+    // 防止重复调用 _cacheToPhone（已有缓存任务在运行/本次已结束）
     if (this._cachingInProgress) return;
+    if (this._downloadCompleted || this._downloadFailed) return;
     const apiBase = getApp().globalData.apiBase;
     wx.request({
       url: `${apiBase}/api/video/task/${taskId}`,
@@ -125,6 +127,8 @@ Page({
     this._precacheDone = false;
     this._precachePath = null;
     this._precachePromise = null;
+    this._downloadCompleted = false;
+    this._downloadFailed = false;
     this.setData({ url, loading: true, downloading: false, error: '', videoInfo: null, taskId: null, progress: 0, statusText: '', statusHint: '' });
     try {
       const res = await post('/api/video/info', { url });
@@ -150,13 +154,13 @@ Page({
         this.setData({ taskId, downloading: true, statusText: '下载中...', statusHint: '0%' });
         try {
           await pollTask(`/api/video/task/${taskId}`, 2000, 600, (st, p) => {
-            // 限制最大 99%，避免触发完成状态（等 _cacheToPhone 完成才到 100%）
-            const capped = Math.min(p || 0, 99);
+            // 限制最大 90%，为"传输到手机"阶段留出 90-100% 空间，进度条单调递增不回退
+            const capped = Math.min(p || 0, 90);
             this.setData({ progress: capped, statusText: '下载中...', statusHint: `${capped}%` });
           });
-          // 服务器下载完成，开始传输到手机
+          // 服务器下载完成，开始传输到手机（进度从 90% 继续，不回退）
           this._cachingInProgress = true; // 提前标记，防止 _checkTaskNow 重复调用
-          this.setData({ progress: 80, statusText: '正在传输到手机...', statusHint: '缓存中' });
+          this.setData({ statusText: '正在传输到手机...', statusHint: '缓存中' });
           // 后台缓存到手机
           await this._cacheToPhone(taskId);
           // 添加到历史
@@ -187,7 +191,7 @@ Page({
   },
 
   // 后台缓存视频到手机，完成后才显示下载完成
-  // 大文件(>80MB)走压缩接口，小文件走原接口；失败自动重试
+  // 大文件(>80MB)走压缩接口，小文件走原接口；支持分片下载避免半路失败
   _cacheToPhone(taskId) {
     return new Promise((resolve) => {
       this._cachingInProgress = true;
@@ -198,26 +202,107 @@ Page({
       const apiBase = getApp().globalData.apiBase;
       const MAX_RETRY = 3;
 
-      // 先查询文件信息，决定是否走压缩
-      const resolveUrl = async () => {
+      // 先查询文件信息，决定是否走压缩、是否分片
+      const resolvePlan = async () => {
         try {
           const info = await get(`/api/video/file-info/${taskId}`);
+          const size = info.size || 0;
           if (info.needCompress) {
             this.setData({ statusHint: '文件较大，正在压缩画质...' });
-            return `${apiBase}/api/video/file-compressed/${taskId}`;
           }
-          return `${apiBase}/api/video/file/${taskId}`;
+          const url = info.needCompress
+            ? `${apiBase}/api/video/file-compressed/${taskId}`
+            : `${apiBase}/api/video/file/${taskId}`;
+          return { url, size, chunked: size > 5 * 1024 * 1024 }; // >5MB 用分片
         } catch {
-          return `${apiBase}/api/video/file/${taskId}`;
+          return { url: `${apiBase}/api/video/file/${taskId}`, size: 0, chunked: false };
         }
       };
 
-      // 单次下载，返回 Promise<成功与否>
+      // 分片下载（支持断点续传），返回 Promise<成功与否>
+      const chunkedDownload = (url, size) => new Promise((done) => {
+        const CHUNK = 2 * 1024 * 1024; // 每片 2MB
+        const totalChunks = Math.ceil(size / CHUNK);
+        let current = 0; // 当前已下载字节
+        let downloadedBytes = 0;
+        const fs = wx.getFileSystemManager();
+        const savePath = `${wx.env.USER_DATA_PATH}/video_${taskId}.mp4`;
+        let bufferQueue = []; // 顺序写入缓冲区
+
+        const writeNext = () => {
+          // 需要按顺序写入，这里用一个简单顺序标记
+        };
+
+        const downloadChunk = (chunkIdx) => new Promise((chunkOk, chunkFail) => {
+          const start = chunkIdx * CHUNK;
+          const end = Math.min(size - 1, start + CHUNK - 1);
+          wx.request({
+            url,
+            method: 'GET',
+            responseType: 'arraybuffer',
+            header: { 'Range': `bytes=${start}-${end}` },
+            timeout: 60000,
+            success: (res) => {
+              if (res.statusCode === 200 || res.statusCode === 206) {
+                // 写到文件（追加模式）
+                const buf = res.data;
+                try {
+                  if (chunkIdx === 0) {
+                    fs.writeFileSync(savePath, buf);
+                  } else {
+                    fs.appendFileSync(savePath, buf);
+                  }
+                  downloadedBytes += buf.byteLength;
+                  chunkOk();
+                } catch (e) {
+                  chunkFail(e);
+                }
+              } else if (res.statusCode === 404) {
+                chunkFail({ expired: true });
+              } else {
+                chunkFail(new Error(`HTTP ${res.statusCode}`));
+              }
+            },
+            fail: (err) => chunkFail(err),
+          });
+        });
+
+        // 串行下载所有分片（避免并发乱序）
+        (async () => {
+          for (let i = 0; i < totalChunks; i++) {
+            try {
+              await downloadChunk(i);
+            } catch (err) {
+              // 单个分片失败，重试当前分片
+              let retried = false;
+              for (let r = 0; r < 2 && !retried; r++) {
+                try {
+                  await downloadChunk(i);
+                  retried = true;
+                } catch (e) {
+                  if (e.expired) {
+                    return done({ ok: false, expired: true });
+                  }
+                }
+              }
+              if (!retried) return done({ ok: false }); // 分片多次失败
+            }
+            // 更新进度（90-99%，单调递增不回退）
+            const pct = Math.min(99, 90 + Math.floor(((i + 1) / totalChunks) * 0.09 * 100));
+            this.setData({ progress: pct });
+          }
+          // 全部下载完成
+          this._precachePath = savePath;
+          done({ ok: true });
+        })();
+      });
+
+      // 单文件下载（小文件用 wx.downloadFile，速度快）
       const attemptDownload = (url) => new Promise((done) => {
         let finished = false;
         const downloadTask = wx.downloadFile({
           url,
-          timeout: 300000, // 压缩大文件需要时间，超时给 5 分钟
+          timeout: 300000,
           success: (res) => {
             if (finished) return;
             finished = true;
@@ -239,23 +324,27 @@ Page({
         });
 
         downloadTask.onProgressUpdate((res) => {
-          this.setData({ progress: Math.min(99, 80 + Math.floor(res.progress * 0.2)) });
+          this.setData({ progress: Math.min(99, 90 + Math.floor(res.progress * 0.09 * 100)) });
         });
       });
 
-      // 带重试的下载
+      // 带重试的下载（根据文件大小选择单文件或分片下载）
       (async () => {
-        const url = await resolveUrl();
+        const plan = await resolvePlan();
         for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
           if (attempt > 1) {
             this.setData({ statusHint: `重试第 ${attempt - 1}/${MAX_RETRY - 1} 次...` });
           }
-          const result = await attemptDownload(url);
+          const result = plan.chunked
+            ? await chunkedDownload(plan.url, plan.size)
+            : await attemptDownload(plan.url);
 
           if (result.ok) {
             // 下载成功
             this._precacheDone = true;
             this._cachingInProgress = false;
+            this._downloadCompleted = true;
+            this._downloadFailed = false;
             this.setData({
               progress: 100,
               statusText: '下载完成！',
@@ -270,6 +359,7 @@ Page({
             // 文件已过期，无需重试
             this._precacheDone = true;
             this._cachingInProgress = false;
+            this._downloadCompleted = true;
             this.setData({
               progress: 0,
               statusText: '文件不可用',
@@ -290,6 +380,7 @@ Page({
         // 所有重试都失败
         this._precacheDone = true;
         this._cachingInProgress = false;
+        this._downloadFailed = true;
         this.setData({
           progress: 0,
           statusText: '下载失败',
@@ -420,6 +511,11 @@ Page({
 
   // 重置页面。默认重新嗅探剪贴板；rescanClipboard=false 用于保存成功后（避免再次进入解析态）
   resetAll(rescanClipboard = true) {
+    this._downloadCompleted = false;
+    this._downloadFailed = false;
+    this._cachingInProgress = false;
+    this._precacheDone = false;
+    this._precachePath = null;
     this.setData({
       url: '', videoInfo: null, taskId: null, progress: 0,
       statusText: '', statusHint: '', loading: false,

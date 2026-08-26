@@ -458,7 +458,7 @@ router.get('/file/:id', async (req, res) => {
     return res.status(404).json({ error: '视频文件不存在或未完成' });
   }
 
-  const filePath = getTaskFile(taskId);
+  const filePath = getTaskFile(taskId) || getTaskFileFromDisk(taskId);
   if (!filePath) {
     return res.status(404).json({ error: '视频文件不存在或未完成' });
   }
