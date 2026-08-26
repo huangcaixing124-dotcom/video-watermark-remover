@@ -60,7 +60,11 @@ async function startDownload(taskId) {
     fs.mkdirSync(outputDir, { recursive: true });
 
     // Build options for downloadVideo
-    const downloadOptions = {};
+    const downloadOptions = { progressCb: (pct) => {
+      if (task && task.status === 'downloading') {
+        task.progress = Math.max(task.progress, Math.min(99, pct));
+      }
+    } };
     if (task.directUrl) {
       downloadOptions.directUrl = task.directUrl;
       console.log(`[downloader] Using direct URL for task ${taskId}`);

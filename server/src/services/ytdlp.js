@@ -450,6 +450,7 @@ function downloadFromUrl(videoUrl, outputPath, options) {
       '-y',
       '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       '-headers', `Referer: ${referer}\r\n`,
+      '-progress', 'pipe:1',
       '-i', videoUrl,
       '-c', 'copy',
       '-movflags', '+faststart',
@@ -457,16 +458,44 @@ function downloadFromUrl(videoUrl, outputPath, options) {
     ];
 
     const proc = spawn('ffmpeg', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'ignore', 'pipe'],
       timeout: 0, // 不限时
       windowsHide: true,
     });
 
     let stderr = '';
-    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    // 解析 ffmpeg -progress 输出，估算下载进度
+    let totalMs = null;      // 输入总时长（毫秒）
+    let progressCb = typeof options.progressCb === 'function' ? options.progressCb : null;
+
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      // ffmpeg 在开始前会打印 Input #0 的 Duration: 00:00:xx.xx
+      const durMatch = chunk.toString().match(/Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/);
+      if (durMatch && totalMs === null) {
+        totalMs = ((+durMatch[1]) * 3600 + (+durMatch[2]) * 60 + (+durMatch[3])) * 1000 + (+durMatch[4]) * 100;
+        if (totalMs > 0) {
+          if (progressCb) progressCb(1); // 开始下载，先给个反馈
+        }
+      }
+    });
+
+    // -progress pipe:1 输出到 stdout，解析 out_time_ms
+    let stdoutBuf = '';
+    proc.stdout.on('data', (chunk) => {
+      stdoutBuf += chunk.toString();
+      if (progressCb && totalMs > 0) {
+        const tm = stdoutBuf.match(/out_time_ms=(\d+)/);
+        if (tm) {
+          const pct = Math.min(99, Math.round((+tm[1]) / totalMs * 100));
+          progressCb(pct);
+        }
+      }
+    });
 
     proc.on('close', (code) => {
       if (code === 0 && fs.existsSync(outputPath)) {
+        if (progressCb) progressCb(100);
         resolve({ filePath: outputPath });
       } else {
         // Extract meaningful error from ffmpeg output (skip version banner)
