@@ -167,10 +167,12 @@ Page({
           });
           wx.showToast({ title: '下载完成', icon: 'success' });
         } catch (pollErr) {
-          // 区分超时和其他错误
+          // 区分超时、任务不存在和其他错误
           const errMsg = pollErr.message || '';
           if (errMsg.includes('超时') || errMsg.includes('timeout')) {
             this.setData({ error: '下载超时，请重试。如果问题持续，请检查网络后重试。', downloading: false });
+          } else if (errMsg.includes('404') || errMsg.includes('不存在') || errMsg.includes('已过期')) {
+            this.setData({ error: '任务不存在（服务器可能已重启），请重新解析', downloading: false });
           } else {
             this.setData({ error: errMsg, downloading: false });
           }
