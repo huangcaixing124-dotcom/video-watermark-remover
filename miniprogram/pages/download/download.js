@@ -187,6 +187,7 @@ Page({
   },
 
   // 后台缓存视频到手机，完成后才显示下载完成
+  // 长视频大文件传输时家庭宽带上行易波动，失败自动重试，避免一次失败就报错
   _cacheToPhone(taskId) {
     return new Promise((resolve) => {
       this._cachingInProgress = true;
@@ -196,12 +197,48 @@ Page({
 
       const apiBase = getApp().globalData.apiBase;
       const url = `${apiBase}/api/video/file/${taskId}`;
+      const MAX_RETRY = 3;
 
-      const downloadTask = wx.downloadFile({
-        url,
-        success: (res) => {
-          if (res.statusCode === 200) {
-            this._precachePath = res.tempFilePath;
+      // 单次下载，返回 Promise<成功与否>
+      const attemptDownload = () => new Promise((done) => {
+        let finished = false;
+        const downloadTask = wx.downloadFile({
+          url,
+          success: (res) => {
+            if (finished) return;
+            finished = true;
+            if (res.statusCode === 200) {
+              this._precachePath = res.tempFilePath;
+              done({ ok: true });
+            } else if (res.statusCode === 404) {
+              done({ ok: false, expired: true });
+            } else {
+              done({ ok: false });
+            }
+          },
+          fail: (err) => {
+            if (finished) return;
+            finished = true;
+            console.error('[cache] 单次下载失败:', err);
+            done({ ok: false });
+          },
+        });
+
+        downloadTask.onProgressUpdate((res) => {
+          this.setData({ progress: Math.min(99, 80 + Math.floor(res.progress * 0.2)) });
+        });
+      });
+
+      // 带重试的下载
+      (async () => {
+        for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
+          if (attempt > 1) {
+            this.setData({ statusHint: `重试第 ${attempt - 1}/${MAX_RETRY - 1} 次...` });
+          }
+          const result = await attemptDownload();
+
+          if (result.ok) {
+            // 下载成功
             this._precacheDone = true;
             this._cachingInProgress = false;
             this.setData({
@@ -211,40 +248,43 @@ Page({
               downloading: false,
               saving: false,
             });
-          } else {
-            // 服务器返回非200（如404），文件不可用
+            return resolve();
+          }
+
+          if (result.expired) {
+            // 文件已过期，无需重试
             this._precacheDone = true;
             this._cachingInProgress = false;
             this.setData({
               progress: 0,
               statusText: '文件不可用',
-              statusHint: '服务器文件已过期，请重新解析',
+              statusHint: '',
               downloading: false,
               saving: false,
               error: '视频文件已过期，请重新解析下载',
             });
+            return resolve();
           }
-          resolve();
-        },
-        fail: (err) => {
-          console.error('[cache] 下载到手机失败:', err);
-          this._precacheDone = true;
-          this._cachingInProgress = false;
-          this.setData({
-            progress: 0,
-            statusText: '下载失败',
-            statusHint: '请检查网络后重试',
-            downloading: false,
-            saving: false,
-            error: '下载到手机失败，请检查网络后重试',
-          });
-          resolve();
-        },
-      });
 
-      downloadTask.onProgressUpdate((res) => {
-        this.setData({ progress: 80 + Math.floor(res.progress * 0.2) });
-      });
+          // 网络失败，如果还有重试次数则继续
+          if (attempt < MAX_RETRY) {
+            await new Promise(r => setTimeout(r, attempt * 1000));
+          }
+        }
+
+        // 所有重试都失败
+        this._precacheDone = true;
+        this._cachingInProgress = false;
+        this.setData({
+          progress: 0,
+          statusText: '下载失败',
+          statusHint: '请检查网络后重试',
+          downloading: false,
+          saving: false,
+          error: '下载到手机失败，已重试多次，请检查网络后重试',
+        });
+        resolve();
+      })();
     });
   },
 
