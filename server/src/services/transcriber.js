@@ -304,7 +304,7 @@ function downloadVideoWithYTDL(url, outputDir) {
       });
     };
 
-    attempt(2); // 最多 2 次重试（共 3 次尝试）
+    attempt(3); // 最多 3 次重试（共 4 次尝试），间隔递增 3s/6s/9s
   });
 }
 

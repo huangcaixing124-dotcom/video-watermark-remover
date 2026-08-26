@@ -351,8 +351,9 @@ async function downloadVideo(url, outputPath, options = {}) {
         }
       } catch (err) {
         if (attempt < 3 && isRetryableError(err)) {
-          console.log(`[ytdlp] Download retry ${attempt}/2: ${err.message}`);
-          await new Promise(r => setTimeout(r, attempt * 1000));
+          const delay = attempt * 3000;
+          console.log(`[ytdlp] Download retry ${attempt}/2 after ${delay}ms: ${err.message}`);
+          await new Promise(r => setTimeout(r, delay));
           continue;
         }
         console.log(`[ytdlp] yt-dlp failed, falling back to proxy API: ${err.message}`);
