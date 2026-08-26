@@ -210,18 +210,22 @@ Page({
         try {
           const info = await get(`/api/video/file-info/${taskId}`);
           const size = info.size || 0;
-          // 设计：<80MB 直接下载（单文件 wx.downloadFile，快且稳）
-          //      >=80MB 走压缩接口转码压小，压缩后整体用 Range 分片拉取（绕开 Cloudflare 100MB 限制）
-          const compress = (info.needCompress || size >= 80 * 1024 * 1024);
-          if (compress) {
-            this.setData({ statusHint: '文件较大，正在压缩画质...' });
+          // 分层方案：
+          //   <100MB  → 单文件 wx.downloadFile 直接下载（快、原画质）
+          //   100-300MB → Range 分片下载（不压缩，防超时+断点续传）
+          //   >300MB  → file-compressed 服务器后台压缩 → 分片下载压缩后的文件（提速）
+          if (size > 300 * 1024 * 1024) {
+            this.setData({ statusHint: '文件较大，正在压缩画质以加速下载...' });
+            return { url: `${apiBase}/api/video/file-compressed/${taskId}`, size, chunked: true };
           }
-          const url = compress
-            ? `${apiBase}/api/video/file-compressed/${taskId}`
-            : `${apiBase}/api/video/file/${taskId}`;
-          return { url, size, chunked: compress };
+          if (size > 100 * 1024 * 1024) {
+            return { url: `${apiBase}/api/video/file/${taskId}`, size, chunked: true };
+          }
+          // size<=100MB 时用 file-info 拿到的 size，走单文件直连；size<0 保守走分片
+          if (size <= 0) return { url: `${apiBase}/api/video/file/${taskId}`, size, chunked: true };
+          return { url: `${apiBase}/api/video/file/${taskId}`, size, chunked: false };
         } catch {
-          return { url: `${apiBase}/api/video/file/${taskId}`, size: 0, chunked: false };
+          return { url: `${apiBase}/api/video/file/${taskId}`, size: 0, chunked: true };
         }
       };
 
@@ -315,7 +319,7 @@ Page({
         try {
           wx.downloadFile({
             url,
-            timeout: 300000,
+            timeout: 600000, // 10分钟：给 <100MB 单文件直连留足余量（约300KB/s下100MB≈5.7分钟）
             success: (res) => {
               if (finished) return;
               finished = true;

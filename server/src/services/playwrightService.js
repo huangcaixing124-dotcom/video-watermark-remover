@@ -248,7 +248,13 @@ async function extractDoubao(page, url, timeout) {
 
   // 拦截 samantha API
   await page.route('**/samantha/**', async (route) => {
-    const response = await route.fetch();
+    let response;
+    try {
+      response = await route.fetch();
+    } catch (err) {
+      try { await route.continue(); } catch {}
+      return;
+    }
     try {
       const body = await response.text();
       // 尝试所有可能的视频 URL 字段
@@ -289,7 +295,19 @@ async function extractDouyin(page, url, timeout) {
   let videoTitle = '抖音视频';
 
   await page.route('**/*', async (route) => {
-    const response = await route.fetch();
+    const reqUrl = route.request().url();
+    // 跳过非 http(s) 资源，避免 route.fetch() 因 chrome-extension:// 协议抛错崩溃
+    if (!/^https?:\/\//i.test(reqUrl)) {
+      try { await route.continue(); } catch {}
+      return;
+    }
+    let response;
+    try {
+      response = await route.fetch();
+    } catch (err) {
+      try { await route.continue(); } catch {}
+      return;
+    }
     if (!videoUrl) {
       try {
         const ct = response.headers()['content-type'] || '';
@@ -321,7 +339,22 @@ async function extractXiaohongshu(page, url, timeout) {
 
   // 拦截所有请求，从 API 响应中提取笔记数据
   await page.route('**/*', async (route) => {
-    const response = await route.fetch();
+    const reqUrl = route.request().url();
+    // 跳过非 http(s) 资源（chrome-extension://、blob: 等），否则 route.fetch() 会抛
+    // "Protocol chrome-extension: not supported" 导致整个提取 Unhandled Rejection 崩溃
+    if (!/^https?:\/\//i.test(reqUrl)) {
+      try { await route.continue(); } catch {}
+      return;
+    }
+    let response;
+    try {
+      response = await route.fetch();
+    } catch (err) {
+      // 网络/协议错误：放行原请求，避免整个提取崩溃
+      console.log(`[playwright] route.fetch failed for ${reqUrl.slice(0, 80)}: ${err.message || err}`);
+      try { await route.continue(); } catch {}
+      return;
+    }
     if (!videoUrl) {
       try {
         const ct = response.headers()['content-type'] || '';
