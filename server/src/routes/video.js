@@ -663,7 +663,7 @@ router.get('/image', async (req, res) => {
 
         // WebP → JPEG（小程序部分系统不支持 WebP 显示）
         const { spawn } = require('child_process');
-        const ff = spawn('ffmpeg', ['-y', '-i', '-', '-f', 'image2', '-q:v', '2', 'pipe:1'], { stdio: ['pipe', 'pipe', 'ignore'] });
+        const ff = spawn('ffmpeg', ['-y', '-i', '-', '-f', 'image2', '-q:v', '2', 'pipe:1'], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
         const outChunks = [];
         ff.stdout.on('data', c => outChunks.push(c));
         ff.on('close', (code) => {
