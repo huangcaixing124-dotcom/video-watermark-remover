@@ -135,10 +135,10 @@ Page({
       if (vinfo.thumbnailUrl) vinfo.thumbnailUrl = proxyImage(vinfo.thumbnailUrl);
       this.setData({ videoInfo: vinfo });
 
-      // 检查视频时长是否超过10分钟
+      // 检查视频时长是否超过25分钟
       if (vinfo.tooLong) {
         this.setData({
-          error: `⚠️ ${vinfo.message || '视频时长超过10分钟限制'}\n\n当前视频时长: ${vinfo.durationFormatted || '未知'}\n\n请使用其他工具下载长视频。`,
+          error: `⚠️ ${vinfo.message || '视频时长超过25分钟限制'}\n\n当前视频时长: ${vinfo.durationFormatted || '未知'}\n\n请使用其他工具下载长视频。`,
           loading: false,
         });
         return;

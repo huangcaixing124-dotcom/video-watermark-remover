@@ -24,8 +24,8 @@ const bridgeQueue = require('../services/bridgeQueue');
 const config = require('../config');
 const { generateId, detectPlatform, formatDuration } = require('../utils/helpers');
 
-/** Max duration in seconds for auto-download (10 minutes). */
-const MAX_DURATION_SECONDS = 600;
+/** Max duration in seconds for auto-download (25 minutes). */
+const MAX_DURATION_SECONDS = 1500;
 
 /** Ensure a URL uses HTTPS (replace HTTP). */
 function ensureHttps(url) {
@@ -115,7 +115,7 @@ router.post('/info', async (req, res) => {
             directUrl: info.directUrl,
             hasOriginal: info.hasOriginal,
             tooLong: true,
-            message: '视频时长超过10分钟，当前工具仅支持10分钟以内的视频下载',
+            message: '视频时长超过25分钟，当前工具仅支持25分钟以内的视频下载',
           },
         });
       }
@@ -218,7 +218,7 @@ router.post('/info', async (req, res) => {
           directUrl: info.directUrl,
           hasOriginal: info.hasOriginal,
           tooLong: true,
-          message: '视频时长超过10分钟，当前工具仅支持10分钟以内的视频下载',
+          message: '视频时长超过25分钟，当前工具仅支持25分钟以内的视频下载',
         },
       });
     }

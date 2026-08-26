@@ -16,8 +16,8 @@ const { getVideoInfo } = require('../services/ytdlp');
 const { detectPlatform, formatDuration } = require('../utils/helpers');
 const config = require('../config');
 
-/** Max duration in seconds for transcription (10 minutes). */
-const MAX_DURATION_SECONDS = 600;
+/** Max duration in seconds for transcription (25 minutes). */
+const MAX_DURATION_SECONDS = 1500;
 
 /** Start a transcription task. */
 router.post('/start', async (req, res) => {
@@ -50,7 +50,7 @@ router.post('/start', async (req, res) => {
     if (duration > MAX_DURATION_SECONDS) {
       return res.json({
         success: false,
-        error: `视频时长 ${formatDuration(duration)}，超过10分钟限制。当前工具仅支持10分钟以内的视频文案提取。`,
+        error: `视频时长 ${formatDuration(duration)}，超过25分钟限制。当前工具仅支持25分钟以内的视频文案提取。`,
         tooLong: true,
         duration: duration,
         durationFormatted: formatDuration(duration),
