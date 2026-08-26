@@ -73,11 +73,16 @@ function createTask(url, options = {}) {
 /**
  * Run the full transcription pipeline.
  */
+// 重试标记（在 runTranscription 中被读取）
+let _retryCount = 0;
+
 async function runTranscription(task) {
-  try {
-    // Step 1: Download video (or get audio directly for Kuaishou)
-    task.status = 'downloading';
-    task.progress = 5;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      _retryCount = 0;
+      // Step 1: Download video (or get audio directly for Kuaishou)
+      task.status = 'downloading';
+      task.progress = 5;
 
     const videoDir = task._outputDir;
     let videoPath = null;
@@ -190,11 +195,51 @@ async function runTranscription(task) {
 
     // Cleanup video file (keep audio + transcript)
     try { if (videoPath) fs.unlinkSync(videoPath); } catch {}
+    return; // 成功，退出
   } catch (err) {
+    const msg = err.message || '';
+    const isRetryable = isRetryableError(err) || msg.includes('timeout') || msg.includes('timed out');
+
+    if (attempt < 2 && isRetryable) {
+      const delay = attempt * 5000;
+      console.log(`[transcriber] Retry (${attempt}/2) after ${delay}ms: ${msg.slice(0, 100)}`);
+      task.status = 'downloading';
+      task.progress = 5;
+      await new Promise(r => setTimeout(r, delay));
+      continue;
+    }
+
     task.status = 'failed';
-    task.error = err.message.slice(0, 500);
+    task.error = friendlyError(msg);
     task.progress = 0;
+    return;
   }
+  }
+}
+
+/** 将原始错误信息转为用户友好的提示 */
+function friendlyError(err) {
+  const msg = (err || '').toLowerCase();
+  if (msg.includes('ssl') || msg.includes('eof') || msg.includes('connection reset') || msg.includes('connection refused') || msg.includes('timed out')) {
+    return '网络波动导致下载失败，请重试。如果持续失败，请检查网络连接后重试。';
+  }
+  if (msg.includes('403') || msg.includes('forbidden')) {
+    return '视频源拒绝访问，可能是链接已失效或需更新 cookies。';
+  }
+  if (msg.includes('404') || msg.includes('not found')) {
+    return '视频文件不存在，请检查链接是否正确。';
+  }
+  if (msg.includes('private') || msg.includes('private video')) {
+    return '该视频为私密视频，无法访问。';
+  }
+  if (msg.includes('no video formats') || msg.includes('unsupported url')) {
+    return '不支持的视频链接，请检查链接是否正确。';
+  }
+  if (msg.includes('cookies') || msg.includes('signed in') || msg.includes('login')) {
+    return '该平台需要登录，请更新 cookies.txt 后重试。';
+  }
+  // 截取前 200 字符
+  return (err || '').slice(0, 200);
 }
 
 /** 判断错误是否为 SSL/网络波动问题（可重试） */
