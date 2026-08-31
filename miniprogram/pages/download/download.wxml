@@ -6,6 +6,9 @@
     <text class="page-subtitle">抖音/快手/B站/小红书/豆包 高清下载</text>
   </view>
 
+  <!-- 顶部原生模板广告 -->
+  <ad-custom unit-id="adunit-4b9b74fc9b6d4245" bindload="adLoad" binderror="adError" bindclose="adClose"></ad-custom>
+
   <!-- 输入区域 -->
   <view class="card">
     <view class="input-label">视频链接</view>
@@ -36,24 +39,24 @@
         <text style="color:var(--primary);font-size:22rpx;margin-top:12rpx;display:block">▶ 点击预览视频</text>
       </view>
     </view>
+  </view>
 
-    <!-- 下载进度 -->
-    <view class="progress-section" wx:if="{{taskId && progress < 100}}">
-      <view class="progress-row">
-        <text class="progress-text">{{statusText}}</text>
-        <text class="progress-pct">{{progress}}%</text>
-      </view>
-      <view class="progress-bar"><view class="progress-fill" style="width:{{progress}}%"></view></view>
-      <text class="progress-hint">{{statusHint}}</text>
+  <!-- 解析/下载进度（独立于 videoInfo 卡片，解析阶段 videoInfo 为空也能显示） -->
+  <view class="card" wx:if="{{(loading || (taskId && progress < 100))}}">
+    <view class="progress-row">
+      <text class="progress-text">{{statusText}}</text>
+      <text class="progress-pct">{{progress}}%</text>
     </view>
+    <view class="progress-bar"><view class="progress-fill" style="width:{{progress}}%"></view></view>
+    <text class="progress-hint">{{statusHint}}</text>
+  </view>
 
-    <!-- 下载完成 -->
-    <view class="complete-section" wx:elif="{{taskId && progress >= 100}}">
-      <view class="complete-icon">✅</view>
-      <text class="complete-text">下载完成！</text>
-      <text class="complete-hint">点击下方按钮保存到手机相册</text>
-      <button class="btn btn-primary dl-btn" bindtap="saveToAlbum" disabled="{{saving}}">{{saving ? '⏳ 保存中...' : '💾 保存到相册'}}</button>
-    </view>
+  <!-- 下载完成 -->
+  <view class="card" wx:if="{{taskId && progress >= 100 && !loading}}">
+    <view class="complete-icon">✅</view>
+    <text class="complete-text">下载完成！</text>
+    <text class="complete-hint">点击下方按钮保存到手机相册</text>
+    <button class="btn btn-primary dl-btn" bindtap="saveToAlbum" disabled="{{saving}}">{{saving ? '⏳ 保存中...' : '💾 保存到相册'}}</button>
   </view>
 
   <!-- 错误 -->

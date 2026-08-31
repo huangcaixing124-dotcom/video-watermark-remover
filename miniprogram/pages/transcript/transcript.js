@@ -17,6 +17,17 @@ Page({
     this.detectClipboard();
   },
 
+  // ── 原生模板广告事件 ──
+  adLoad() {
+    console.log('原生模板广告加载成功');
+  },
+  adError(err) {
+    console.error('原生模板广告加载失败', err);
+  },
+  adClose() {
+    console.log('原生模板广告关闭');
+  },
+
   // ── 分享 ──
   onShareAppMessage() {
     const text = this.data.text;
@@ -107,8 +118,17 @@ Page({
       return;
     }
     this.setData({ loading: true, error: '', text: null, progress: 0 });
+    // 解析阶段：立即显示进度条，0→15% 平滑推进（文案"正在解析链接/视频信息"）
+    this._clearParseTimer();
+    let parsePct = 0;
+    this._parseTimer = setInterval(() => {
+      parsePct = Math.min(15, parsePct + 1);
+      this.setData({ progress: parsePct, statusText: '正在解析链接/视频信息', statusHint: `${parsePct}%` });
+      if (parsePct >= 15) clearInterval(this._parseTimer);
+    }, 180);
     try {
       const res = await post('/api/transcript/start', { url, language: 'zh' });
+      this._clearParseTimer(); // 解析完成，停止解析进度动画
       if (!res.success) {
         if (res.tooLong) {
           this.setData({ error: `⚠️ ${res.error}`, loading: false });
@@ -120,16 +140,24 @@ Page({
       const taskId = res.data.id;
       this.setData({ taskId });
       // 轮询等待任务完成，返回的 status.text 是 SRT 格式
+      // 任务处理进度 0-100 映射到 15-100%（解析占 0-15%），保证进度条连续不回退
       const status = await pollTask(`/api/transcript/task/${taskId}`, 3000, 9999, (st, p) => {
         const labels = { downloading: '下载视频中...', extracting: '提取音频中...', transcribing: '语音转文字中...' };
-        this.setData({ progress: p || 0, statusText: labels[st] || '处理中...', statusHint: st === 'transcribing' ? '需要几分钟，请稍候' : `${p}%` });
+        const raw = Math.min(p || 0, 100);
+        const mapped = 15 + Math.round((raw / 100) * 85);
+        this.setData({ progress: mapped, statusText: labels[st] || '处理中...', statusHint: st === 'transcribing' ? '需要几分钟，请稍候' : `${mapped}%` });
       });
       // 从 SRT 格式中提取纯文本（去掉时间戳和序号）
       const plainText = this._stripSrtTimestamps(status.text || '');
       this.setData({ text: plainText || '（文案为空）', progress: 100, statusText: '提取完成', statusHint: '' });
       wx.showToast({ title: '文案提取成功', icon: 'success' });
-    } catch (err) { this.setData({ error: err.message || '文案提取失败' }); }
-    finally { this.setData({ loading: false }); }
+    } catch (err) { this._clearParseTimer(); this.setData({ error: err.message || '文案提取失败' }); }
+    finally { this._clearParseTimer(); this.setData({ loading: false }); }
+  },
+
+  // 清理解析阶段进度定时器
+  _clearParseTimer() {
+    if (this._parseTimer) { clearInterval(this._parseTimer); this._parseTimer = null; }
   },
 
   // 从SRT格式中提取纯文本：去掉时间戳行和序号行

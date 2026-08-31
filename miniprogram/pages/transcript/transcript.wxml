@@ -5,6 +5,9 @@
     <text class="page-subtitle">视频语音转文字 · 导出SRT字幕</text>
   </view>
 
+  <!-- 顶部原生模板广告 -->
+  <ad-custom unit-id="adunit-5d0067d96abd063e" bindload="adLoad" binderror="adError" bindclose="adClose"></ad-custom>
+
   <!-- 剪贴板检测 -->
   <view class="detect-card" wx:if="{{showDetect}}">
     <view class="detect-row">
@@ -35,8 +38,8 @@
     <text class="text-tertiary" style="font-size:22rpx;text-align:center;display:block;margin-top:16rpx">需要下载视频并提取音频，可能需要几分钟</text>
   </view>
 
-  <!-- 处理进度 -->
-  <view class="card" wx:if="{{taskId && !text && !error}}">
+  <!-- 处理进度（解析/提取/转写，解析阶段 loading 时也显示） -->
+  <view class="card" wx:if="{{(loading || taskId) && !text && !error}}">
     <view class="progress-section">
       <view class="progress-row">
         <text class="progress-text">{{statusText}}</text>

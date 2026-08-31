@@ -26,6 +26,18 @@
     </view>
   </view>
 
+  <!-- 解析/保存进度（独立于笔记信息卡片，解析阶段 noteInfo 为空也能显示） -->
+  <view class="card" wx:if="{{(loading || downloading) && !error}}">
+    <view class="progress-section">
+      <view class="progress-row">
+        <text class="progress-text">{{statusText}}</text>
+        <text class="progress-pct">{{progress}}%</text>
+      </view>
+      <view class="progress-bar"><view class="progress-fill" style="width:{{progress}}%"></view></view>
+      <text class="progress-hint">{{statusHint}}</text>
+    </view>
+  </view>
+
   <!-- 笔记信息 -->
   <view class="card" wx:if="{{noteInfo && !error}}">
     <!-- 笔记头部 -->

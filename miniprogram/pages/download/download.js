@@ -22,6 +22,17 @@ Page({
     this.detectClipboard();
   },
 
+  // ── 原生模板广告事件 ──
+  adLoad() {
+    console.log('原生模板广告加载成功');
+  },
+  adError(err) {
+    console.error('原生模板广告加载失败', err);
+  },
+  adClose() {
+    console.log('原生模板广告关闭');
+  },
+
   // ── 分享 ──
   onShareAppMessage() {
     const info = this.data.videoInfo;
@@ -109,7 +120,7 @@ Page({
   },
 
   onUrlInput(e) { this.setData({ url: e.detail.value }); },
-  clearUrl() { this._busy = false; this.resetAll(); },
+  clearUrl() { this._cancelDownload(); },
 
   // ── 解析并下载（合并为一个操作）──
   async parseVideo() {
@@ -130,9 +141,20 @@ Page({
     this._precachePromise = null;
     this._downloadCompleted = false;
     this._downloadFailed = false;
-    this.setData({ url, loading: true, downloading: false, error: '', videoInfo: null, taskId: null, progress: 0, statusText: '', statusHint: '' });
+    // 解析阶段：立即显示进度条，0→15% 平滑推进（文案"正在解析链接/视频信息"）
+    this._clearParseTimer();
+    this._parseFired = true;
+    let parsePct = 0;
+    this._parseTimer = setInterval(() => {
+      parsePct = Math.min(15, parsePct + 1);
+      this.setData({ progress: parsePct, statusText: '正在解析链接/视频信息', statusHint: `${parsePct}%` });
+      if (parsePct >= 15) clearInterval(this._parseTimer);
+    }, 180);
+    this.setData({ url, loading: true, downloading: false, error: '', videoInfo: null, taskId: null, progress: 0, statusText: '正在解析链接/视频信息', statusHint: '0%' });
     try {
       const res = await post('/api/video/info', { url });
+      // 解析完成，停止解析进度动画
+      this._clearParseTimer();
       if (!res.success) return void this.setData({ error: res.error || '解析失败', loading: false });
 
       // 显示视频信息（缩略图走代理）
@@ -142,6 +164,7 @@ Page({
 
       // 检查视频时长是否超过25分钟
       if (vinfo.tooLong) {
+        this._clearParseTimer();
         this.setData({
           error: `⚠️ ${vinfo.message || '视频时长超过25分钟限制'}\n\n当前视频时长: ${vinfo.durationFormatted || '未知'}\n\n请使用其他工具下载长视频。`,
           loading: false,
@@ -152,12 +175,14 @@ Page({
       // 如果有 taskId，自动开始轮询下载进度
       if (res.data.taskId) {
         const taskId = res.data.taskId;
-        this.setData({ taskId, downloading: true, statusText: '下载中...', statusHint: '0%' });
+        // 解析已完成（进度条已到 15%），下载阶段从 15% 继续
+        this.setData({ taskId, downloading: true, statusText: '下载中...', statusHint: '15%' });
         try {
           await pollTask(`/api/video/task/${taskId}`, 2000, 600, (st, p) => {
-            // 限制最大 90%，为"传输到手机"阶段留出 90-100% 空间，进度条单调递增不回退
-            const capped = Math.min(p || 0, 90);
-            this.setData({ progress: capped, statusText: '下载中...', statusHint: `${capped}%` });
+            // 下载进度 0-100 映射到 15-90%（为"传输到手机"阶段留出 90-100%），单调递增不回退
+            const raw = Math.min(p || 0, 100);
+            const mapped = 15 + Math.round((raw / 100) * 75);
+            this.setData({ progress: Math.min(mapped, 90), statusText: '下载中...', statusHint: `${mapped}%` });
           });
           // 服务器下载完成，开始传输到手机（无论上次 poll 进度多少，先补到 90%，避免进度条"没走完"）
           this._cachingInProgress = true; // 提前标记，防止 _checkTaskNow 重复调用
@@ -184,11 +209,18 @@ Page({
         }
       }
     } catch (err) {
+      this._clearParseTimer();
       this.setData({ error: err.message || '解析失败' });
     } finally {
+      this._clearParseTimer();
       this.setData({ loading: false });
       this._busy = false;
     }
+  },
+
+  // 清理解析阶段进度定时器
+  _clearParseTimer() {
+    if (this._parseTimer) { clearInterval(this._parseTimer); this._parseTimer = null; }
   },
 
   // 后台缓存视频到手机，完成后才显示下载完成
@@ -200,6 +232,9 @@ Page({
       this._cachingInProgress = true;
       this._precacheDone = false;
       this._precachePath = null;
+      // 取消信号：点"清空链接"时置 true，分片循环/单文件据此中止，避免污染下一次下载
+      this._abortCache = false;
+      this._downloadTask = null;
       this.setData({ statusText: '正在传输到手机...', statusHint: '缓存中', saving: true });
 
       const apiBase = getApp().globalData.apiBase;
@@ -273,6 +308,11 @@ Page({
 
         (async () => {
           while (from < size) {
+            // 取消检查：点"清空链接"时中止，避免半截文件污染下次下载
+            if (this._abortCache) {
+              try { fs.unlinkSync(savePath); } catch {}
+              return done({ ok: false, aborted: true });
+            }
             const end = Math.min(size - 1, from + CHUNK - 1);
             try {
               const n = await downloadRange(from, end);
@@ -280,6 +320,10 @@ Page({
               const pct = Math.min(99, 90 + Math.round((from / size) * 0.09 * 100));
               this.setData({ progress: pct });
             } catch (err) {
+              if (this._abortCache) {
+                try { fs.unlinkSync(savePath); } catch {}
+                return done({ ok: false, aborted: true });
+              }
               if (err && err.expired) return done({ ok: false, expired: true });
               // 某段失败：保留已写磁盘字节，返回失败让外层整体重试（从 from 续传）
               return done({ ok: false });
@@ -290,20 +334,11 @@ Page({
         })();
       });
 
-      // 单文件下载（<80MB 直接下载，用 wx.downloadFile，速度快）
+      // 单文件下载（<100MB 直接下载，用 wx.downloadFile，速度快）
       const attemptDownload = (url) => new Promise((done) => {
         let finished = false;
         const fsMgr = wx.getFileSystemManager();
         const persistPath = `${wx.env.USER_DATA_PATH}/video_${taskId}.mp4`;
-        // 用定时器模拟进度（不依赖 downloadTask.onProgressUpdate，避免某些基础库版本崩溃）
-        const startFakeProgress = () => {
-          let fakePct = 90;
-          const progressTimer = setInterval(() => {
-            if (finished) { clearInterval(progressTimer); return; }
-            fakePct = Math.min(99, fakePct + 1);
-            this.setData({ progress: fakePct, statusText: '正在传输到手机...' });
-          }, 500);
-        };
 
         // 把临时文件固化到 USER_DATA_PATH（避免 wx.downloadFile 的 tempFilePath 被系统提前回收）
         const persistTemp = (tempFilePath, cb) => {
@@ -316,16 +351,19 @@ Page({
           }
         };
 
+        let downloadTask = null;
         try {
-          wx.downloadFile({
+          downloadTask = wx.downloadFile({
             url,
             timeout: 600000, // 10分钟：给 <100MB 单文件直连留足余量（约300KB/s下100MB≈5.7分钟）
             success: (res) => {
               if (finished) return;
               finished = true;
+              if (this._abortCache) { this._precachePath = null; done({ ok: false, aborted: true }); return; }
               if (res.statusCode === 200) {
                 persistTemp(res.tempFilePath, (finalPath) => {
                   this._precachePath = finalPath;
+                  this.setData({ progress: 100 });
                   done({ ok: true });
                 });
               } else if (res.statusCode === 404) {
@@ -347,8 +385,24 @@ Page({
           return;
         }
 
-        // 启动模拟进度（不依赖 downloadTask.onProgressUpdate，避免基础库版本崩溃）
-        startFakeProgress();
+        // 挂载到实例，供"清空链接"时 abort 中止
+        this._downloadTask = downloadTask;
+
+        // 用真实进度（downloadTask.onProgressUpdate），并做 null/方法保护避免基础库崩溃。
+        // 进度映射到 90-100 区间（和服务器下载 0-90 承接），真实传输多少显示多少。
+        if (downloadTask && typeof downloadTask.onProgressUpdate === 'function') {
+          try {
+            downloadTask.onProgressUpdate((res) => {
+              if (finished) return;
+              if (this._abortCache) return;
+              const real = (res && typeof res.progress === 'number') ? res.progress : 0;
+              const capped = Math.min(100, Math.max(90, Math.round(90 + (real / 100) * 9)));
+              this.setData({ progress: capped, statusText: '正在传输到手机...', statusHint: `${capped}%` });
+            });
+          } catch (e) {
+            console.warn('[cache] onProgressUpdate 初始化异常, 走无进度:', e);
+          }
+        }
       });
 
       // 带重试的下载（根据文件大小选择单文件或分片下载）
@@ -361,6 +415,11 @@ Page({
           const result = plan.chunked
             ? await chunkedDownload(plan.url, plan.size)
             : await attemptDownload(plan.url);
+
+          // 被"清空链接"取消：直接结束，不再重试，等待 resetAll 收尾
+          if (result.aborted) {
+            return resolve();
+          }
 
           if (result.ok) {
             // 下载成功
@@ -501,7 +560,28 @@ Page({
 
   // 下载新视频（清空状态回到初始）
   newDownload() {
+    this._cancelDownload();
+  },
+
+  // 真正取消正在进行的下载，为下一次粘贴下载做干净准备：
+  // 1) 置取消信号，让分片循环/单文件下载中止
+  // 2) abort 单文件 downloadTask
+  // 3) 清理本地残留的半截缓存文件
+  _cancelDownload() {
     this._busy = false;
+    this._abortCache = true;
+    this._clearParseTimer(); // 解析阶段的进度动画一并停止
+    const taskId = this.data.taskId;
+    // 中止单文件下载任务
+    if (this._downloadTask && typeof this._downloadTask.abort === 'function') {
+      try { this._downloadTask.abort(); } catch (e) {}
+    }
+    this._downloadTask = null;
+    // 清理残留半截缓存文件（分片路径由循环内 unlink，这里兜底删一次）
+    if (taskId) {
+      const fs = wx.getFileSystemManager();
+      try { fs.unlinkSync(`${wx.env.USER_DATA_PATH}/video_${taskId}.mp4`); } catch (e) {}
+    }
     this.resetAll();
   },
 
@@ -550,6 +630,8 @@ Page({
     this._cachePromise = null;
     this._precacheDone = false;
     this._precachePath = null;
+    this._downloadTask = null;
+    this._abortCache = false;
     this.setData({
       url: '', videoInfo: null, taskId: null, progress: 0,
       statusText: '', statusHint: '', loading: false,

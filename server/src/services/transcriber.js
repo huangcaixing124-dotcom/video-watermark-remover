@@ -178,10 +178,24 @@ async function runTranscription(task) {
     task.status = 'transcribing';
     task.progress = 40;
 
-    const text = await runWhisper(audioPath, task._outputDir, config.whisperModelSize, 'zh', config.whisperDevice, config.whisperComputeType);
+    // 先用 zh 强制中文识别（快、对普通话准）。
+    // 若识别结果为空，很可能是语言误判（英文/粤语/多语言/BGM干扰），
+    // 自动用 auto 语言检测再试一次，避免"明明有对白却返回空文案"。
+    let text = await runWhisper(audioPath, task._outputDir, config.whisperModelSize, 'zh', config.whisperDevice, config.whisperComputeType);
+    let lang = 'zh';
+    if (!text || !text.trim()) {
+      console.log(`[transcriber] zh transcription empty (${audioPath}), retrying with auto language detection...`);
+      try {
+        text = await runWhisper(audioPath, task._outputDir, config.whisperModelSize, 'auto', config.whisperDevice, config.whisperComputeType);
+        lang = 'auto';
+        console.log(`[transcriber] auto language retry done, text_len=${(text || '').trim().length}`);
+      } catch (e) {
+        console.warn(`[transcriber] auto language retry failed: ${e.message}`);
+      }
+    }
 
     task.text = text;
-    task.language = 'zh';
+    task.language = lang;
     task.progress = 90;
 
     // Find SRT

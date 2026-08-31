@@ -114,9 +114,18 @@ Page({
       statusText: '', statusHint: '', downloading: false,
       selectedCount: 0, previewVisible: false,
     });
+    // 解析阶段：立即显示进度条，0→15% 平滑推进（文案"正在解析链接/笔记信息"）
+    this._clearParseTimer();
+    let parsePct = 0;
+    this._parseTimer = setInterval(() => {
+      parsePct = Math.min(15, parsePct + 1);
+      this.setData({ progress: parsePct, statusText: '正在解析链接/笔记信息', statusHint: `${parsePct}%` });
+      if (parsePct >= 15) clearInterval(this._parseTimer);
+    }, 180);
 
     try {
       const res = await post('/api/video/album/info', { url: cleanUrl });
+      this._clearParseTimer();
       if (!res.success) throw new Error(res.error || '解析失败');
 
       const data = res.data;
@@ -135,12 +144,20 @@ Page({
         description: data.description || '',
         selectedCount: images.length,
         loading: false,
+        progress: 15,
       });
     } catch (err) {
+      this._clearParseTimer();
       this.setData({ error: err.message || '解析失败', loading: false });
     } finally {
+      this._clearParseTimer();
       this._busy = false;
     }
+  },
+
+  // 清理解析阶段进度定时器
+  _clearParseTimer() {
+    if (this._parseTimer) { clearInterval(this._parseTimer); this._parseTimer = null; }
   },
 
   // 复制文案
