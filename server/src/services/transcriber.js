@@ -76,7 +76,31 @@ function createTask(url, options = {}) {
 // 重试标记（在 runTranscription 中被读取）
 let _retryCount = 0;
 
+// ── Whisper 转录并发信号量 ─────────────────────────────
+// 转录是 CPU 密集型。i7-14790F(16c/24t) 上同时只跑 maxTranscriptions 个，
+// 其余任务排队（status='queued'），避免 CPU 被打满导致下载/API 卡顿。
+let activeTranscriptions = 0;
+const MAX_TRANSCRIPTIONS = config.maxTranscriptions || 3;
+
+/**
+ * 并发受控的转录入口。超过上限的任务先排队（queued），每 3s 重试一次空位。
+ * 拿到空位后再执行真正的转录，确保同一时刻只有 MAX_TRANSCRIPTIONS 个在跑。
+ */
 async function runTranscription(task) {
+  while (activeTranscriptions >= MAX_TRANSCRIPTIONS) {
+    if (task.status === 'pending') task.status = 'queued';
+    await sleep(3000);
+  }
+  if (task.status === 'queued' && !task.error) task.status = 'pending';
+  activeTranscriptions++;
+  try {
+    await runTranscriptionBody(task);
+  } finally {
+    activeTranscriptions--;
+  }
+}
+
+async function runTranscriptionBody(task) {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       _retryCount = 0;

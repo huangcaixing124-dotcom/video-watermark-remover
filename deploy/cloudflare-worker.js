@@ -121,8 +121,9 @@ function routeBackend(url, hashKey, statusArr) {
   }
 
   // 任务 ID 前缀路由：0开头→Windows，1开头→MacBook
+  // 同时覆盖 video(task|file)、transcript(task|text|srt)，任务始终回到创建它的服务器
   if (hashKey === 'task-id') {
-    const id = url.pathname.match(/\/api\/video\/(?:task|file)\/(.+)/)?.[1] || '';
+    const id = url.pathname.match(/\/api\/(?:video\/(?:task|file)|transcript\/(?:task|text|srt))\/(.+)/)?.[1] || '';
     const idx = id.startsWith('0') ? 0 : id.startsWith('1') ? 1 : -1;
     if (idx >= 0 && statusArr[idx]) return SERVERS[idx];
     if (idx >= 0) return onlineServers[0];
@@ -157,7 +158,7 @@ async function forwardWithFailover(request, url, backend) {
     const fallback = others.find(s => s.url !== backend.url);
     if (!fallback) {
       return new Response(JSON.stringify({ error: '转发失败，无可用备用' }), {
-        status: 502, headers: { 'Content-Type': 'application/json' },
+        status: 503, headers: { 'Content-Type': 'application/json' },
       });
     }
     try {
@@ -167,7 +168,7 @@ async function forwardWithFailover(request, url, backend) {
       return new Response(resp.body, { status: resp.status, headers: resp.headers });
     } catch {
       return new Response(JSON.stringify({ error: '转发失败，所有服务器不可用' }), {
-        status: 502, headers: { 'Content-Type': 'application/json' },
+        status: 503, headers: { 'Content-Type': 'application/json' },
       });
     }
   }
@@ -188,7 +189,8 @@ async function extractHashKey(request, url) {
     } catch {}
   }
 
-  const taskMatch = path.match(/\/api\/video\/(?:task|file)\/(.+)/);
+  // 任务状态轮询类路径：video(task|file) 与 transcript(task|text|srt) 均按 id 前缀粘性路由
+  const taskMatch = path.match(/\/api\/(?:video\/(?:task|file)|transcript\/(?:task|text|srt))\/(.+)/);
   if (taskMatch) return 'task-id';
 
   return path + url.search;

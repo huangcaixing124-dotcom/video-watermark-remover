@@ -65,4 +65,43 @@ function getRefererForUrl(url) {
   return 'https://www.douyin.com/';
 }
 
-module.exports = { generateId, formatDuration, sanitizeFilename, estimateSizeMB, sleep, detectPlatform, getRefererForUrl };
+/**
+ * 从 URL 归一化出平台 key（与 PLATFORMS cookie 文件名一致）。
+ * 供 resolveCookiesFile 及各服务按平台分发 cookie。
+ */
+function platformFromUrl(url) {
+  if (!url) return 'other';
+  if (url.includes('douyin.com') || url.includes('iesdouyin.com')) return 'douyin';
+  if (url.includes('kuaishou.com') || url.includes('gifshow.com')) return 'kuaishou';
+  if (url.includes('doubao.com')) return 'doubao';
+  if (url.includes('xiaohongshu.com') || url.includes('xhslink.com') || url.includes('xhslink.cn')) return 'xiaohongshu';
+  if (url.includes('bilibili.com') || url.includes('b23.tv')) return 'bilibili';
+  if (url.includes('weibo.com') || url.includes('weibo.cn')) return 'weibo';
+  return 'other';
+}
+
+/**
+ * 返回某个 URL 应使用的 cookie 文件绝对路径（多平台独立 cookie 方案）。
+ * 规则：优先 server/config/<platform>_cookies.txt（如 douyin_cookies.txt）；
+ *       该平台无独立文件时回退到旧的共享 cookies.txt（若存在）。
+ * 返回 null 表示两者皆无。
+ */
+function resolveCookiesFile(url) {
+  const fs = require('fs');
+  const path = require('path');
+  const config = require('../config');
+  const plat = platformFromUrl(url);
+  // 独立平台 cookie 文件位于 <项目根>/server/config/（与 cookie_splitter.js 输出一致）
+  const configDir = path.join(config.projectDir, 'server', 'config');
+  if (plat !== 'other' && plat !== 'youtube' && plat !== 'tiktok') {
+    const platformFile = path.join(configDir, `${plat}_cookies.txt`);
+    if (fs.existsSync(platformFile)) return platformFile;
+  }
+  // 回退：旧的共享 cookies.txt
+  for (const p of [path.join(config.projectDir, 'cookies.txt'), path.join(config.serverDir, '..', 'cookies.txt')]) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+module.exports = { generateId, formatDuration, sanitizeFilename, estimateSizeMB, sleep, detectPlatform, getRefererForUrl, platformFromUrl, resolveCookiesFile };

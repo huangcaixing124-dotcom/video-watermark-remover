@@ -43,6 +43,11 @@ function isDoubaoUrl(url) {
  * Returns a cookie string suitable for the Cookie header.
  */
 function readCookies() {
+  // 多平台独立 cookie：优先 server/config/doubao_cookies.txt（cookie_splitter.js 产出）
+  const platformCookies = path.join(config.projectDir, 'server', 'config', 'doubao_cookies.txt');
+  if (fs.existsSync(platformCookies)) {
+    return readCookiesFile(platformCookies);
+  }
   const cookiesPath = path.join(config.projectDir, 'cookies.txt');
   if (!fs.existsSync(cookiesPath)) {
     // Also try alternate location

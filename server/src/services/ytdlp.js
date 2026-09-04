@@ -19,7 +19,7 @@ const http = require('http');
 const https = require('https');
 const config = require('../config');
 const { resolveDouyin, isDouyinUrl } = require('./douyinProxy');
-const { getRefererForUrl } = require('../utils/helpers');
+const { getRefererForUrl, resolveCookiesFile } = require('../utils/helpers');
 
 /** Resolve yt-dlp binary path at runtime. */
 function _findYtdlp() {
@@ -233,9 +233,9 @@ function _getVideoInfoWithYtdlp(url, options = {}) {
       '--no-playlist',
     ];
 
-    // Use cookies file if explicitly provided or auto-discover from project dir
-    const cookiesFile = options.cookiesFile || path.join(config.projectDir, 'cookies.txt');
-    if (fs.existsSync(cookiesFile)) {
+    // Use cookies file if explicitly provided or auto-discover by platform
+    const cookiesFile = options.cookiesFile || resolveCookiesFile(url);
+    if (cookiesFile && fs.existsSync(cookiesFile)) {
       args.push('--cookies', cookiesFile);
     }
 
@@ -548,9 +548,9 @@ function _downloadWithYtdlp(url, outputPath, options = {}) {
     // Force mp4 format for compatibility
     args.push('-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best');
 
-    // Auto-discover cookies.txt from project dir
-    const cookiesFile = options.cookiesFile || path.join(config.projectDir, 'cookies.txt');
-    if (fs.existsSync(cookiesFile)) {
+    // Auto-discover cookies by platform (douyin/kuaishou/bilibili 等各自独立文件)
+    const cookiesFile = options.cookiesFile || resolveCookiesFile(url);
+    if (cookiesFile && fs.existsSync(cookiesFile)) {
       args.push('--cookies', cookiesFile);
     }
 

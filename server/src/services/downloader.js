@@ -6,7 +6,7 @@
  */
 const path = require('path');
 const fs = require('fs');
-const { generateId, sleep, estimateSizeMB } = require('../utils/helpers');
+const { generateId, sleep, estimateSizeMB, resolveCookiesFile } = require('../utils/helpers');
 const { downloadVideo, isRetryableError } = require('./ytdlp');
 const { runWatermarkRemoval } = require('./bridgeQueue');
 const config = require('../config');
@@ -67,6 +67,13 @@ async function startDownload(taskId) {
     } };
     if (task.directUrl) {
       downloadOptions.directUrl = task.directUrl;
+    }
+    // 按平台分发独立 cookie 文件（douyin/kuaishou/xiaohongshu/bilibili 等）。
+    // 之前只针对 B站 硬编码 bilibili_cookies.txt；现用中央 helper 按 URL 选对应平台文件，
+    // 无独立文件时回退共享 cookies.txt。
+    if (task.url) {
+      const cf = resolveCookiesFile(task.url);
+      if (cf) downloadOptions.cookiesFile = cf;
     }
     return downloadOptions;
   };

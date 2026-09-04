@@ -52,18 +52,38 @@ Page({
 
   onShow() {
     // 从后台切回前台时，检查任务状态（避免轮询延迟）
-    // 仅在"还没完成、还没失败"时才重新检查，避免重复下载
-    if (this.data.taskId && this.data.downloading && !this._downloadCompleted && !this._downloadFailed) {
+    // 仅在"还没完成、还没失败、且不是已完成的同一任务"时才重新检查，避免重复下载
+    // _cachingInProgress 为 true 时传输仍在进行，无需也无需被动轮询，避免多打请求或进度回退
+    // 另加存储级已完成标记：页面被销毁重建时实例字段(_downloadCompleted/_completedTaskId)会丢失，
+    // 但存储标记仍在，能防止切后台再进导致"下载已完成又被重复下载"。
+    if (this.data.taskId && this.data.downloading && !this._cachingInProgress && !this._downloadCompleted && !this._downloadFailed && this._completedTaskId !== this.data.taskId && !this._isTaskPersistedDone(this.data.taskId)) {
       this._checkTaskNow();
     }
+  },
+
+  // 存储级"该任务已完成"标记：跨页面销毁/重建存活，避免切后台再进重复下载。
+  _isTaskPersistedDone(taskId) {
+    if (!taskId) return false;
+    try {
+      return wx.getStorageSync('wx_done_task_id') === String(taskId);
+    } catch (e) { return false; }
+  },
+  _markTaskPersistedDone(taskId) {
+    try { wx.setStorageSync('wx_done_task_id', String(taskId)); } catch (e) {}
+  },
+  _clearTaskPersistedDone() {
+    try { wx.removeStorageSync('wx_done_task_id'); } catch (e) {}
   },
 
   _checkTaskNow() {
     const taskId = this.data.taskId;
     if (!taskId) return;
-    // 防止重复调用 _cacheToPhone（已有缓存任务在运行/本次已结束）
+    // 防止重复调用 _cacheToPhone（已有缓存任务在运行/本次已结束/已完成同一任务/存储级已完成）
     if (this._cachingInProgress) return;
     if (this._downloadCompleted || this._downloadFailed) return;
+    if (this._completedTaskId === taskId) return;
+    if (this._cachePromise) return;
+    if (this._isTaskPersistedDone(taskId)) return;
     const apiBase = getApp().globalData.apiBase;
     wx.request({
       url: `${apiBase}/api/video/task/${taskId}`,
@@ -141,6 +161,8 @@ Page({
     this._precachePromise = null;
     this._downloadCompleted = false;
     this._downloadFailed = false;
+    this._completedTaskId = null; // 新任务开始，清空已完成标记
+    this._clearTaskPersistedDone(); // 清空存储级已完成标记，允许新任务正常下载
     // 解析阶段：立即显示进度条，0→15% 平滑推进（文案"正在解析链接/视频信息"）
     this._clearParseTimer();
     this._parseFired = true;
@@ -178,12 +200,19 @@ Page({
         // 解析已完成（进度条已到 15%），下载阶段从 15% 继续
         this.setData({ taskId, downloading: true, statusText: '下载中...', statusHint: '15%' });
         try {
-          await pollTask(`/api/video/task/${taskId}`, 2000, 600, (st, p) => {
-            // 下载进度 0-100 映射到 15-90%（为"传输到手机"阶段留出 90-100%），单调递增不回退
-            const raw = Math.min(p || 0, 100);
-            const mapped = 15 + Math.round((raw / 100) * 75);
-            this.setData({ progress: Math.min(mapped, 90), statusText: '下载中...', statusHint: `${mapped}%` });
-          });
+          // 下载阶段：真实进度 0-100 映射到 15-90%（为"传输到手机"留出 90-100%）。
+          // 叠加缓动层：排队/无进度回调时进度条缓慢递增，真实进度到达时取 max 接管，单调不回退。
+          this._startDownloadEase();
+          try {
+            await pollTask(`/api/video/task/${taskId}`, 2000, 600, (st, p) => {
+              const raw = Math.min(p || 0, 100);
+              const mapped = 15 + Math.round((raw / 100) * 75);
+              this._easeProgress = Math.max(this._easeProgress || 15, mapped); // 真实值接管缓动值
+              this._applyDownloadProgress(mapped);
+            });
+          } finally {
+            this._stopDownloadEase(); // 下载结束(成功/失败/超时)停止缓动
+          }
           // 服务器下载完成，开始传输到手机（无论上次 poll 进度多少，先补到 90%，避免进度条"没走完"）
           this._cachingInProgress = true; // 提前标记，防止 _checkTaskNow 重复调用
           this.setData({ progress: 90, statusText: '正在传输到手机...', statusHint: '缓存中' });
@@ -221,6 +250,31 @@ Page({
   // 清理解析阶段进度定时器
   _clearParseTimer() {
     if (this._parseTimer) { clearInterval(this._parseTimer); this._parseTimer = null; }
+  },
+
+  // ── 下载阶段进度缓动 ──
+  // 高峰期/排队或无进度回调时，进度条在 15→85 区间缓慢递增，避免"停在15%不动"或"突然跳90%"。
+  // 真实进度到达时由 pollTask 回调取 max 接管；到达 90（传输）前停止。
+  _startDownloadEase() {
+    this._stopDownloadEase();
+    if (!this._easeProgress || this._easeProgress < 15) this._easeProgress = 15;
+    // 每 2.5s +1，15→85 约 3 分钟爬满，封顶 85（不碰 90 的传输分界）
+    this._easeTimer = setInterval(() => {
+      if (this._easeProgress < 85) {
+        this._easeProgress++;
+        this._applyDownloadProgress(this._easeProgress);
+      } else {
+        this._stopDownloadEase();
+      }
+    }, 2500);
+  },
+  _stopDownloadEase() {
+    if (this._easeTimer) { clearInterval(this._easeTimer); this._easeTimer = null; }
+  },
+  // 统一写下载阶段进度：真实映射值与缓动值取 max，单调不回退，封顶 90
+  _applyDownloadProgress(shown) {
+    const capped = Math.min(Math.max(shown, this.data.progress || 0), 90);
+    this.setData({ progress: capped, statusText: '下载中...', statusHint: `${capped}%` });
   },
 
   // 后台缓存视频到手机，完成后才显示下载完成
@@ -427,6 +481,8 @@ Page({
             this._cachingInProgress = false;
             this._downloadCompleted = true;
             this._downloadFailed = false;
+            this._completedTaskId = taskId; // 标记该任务已完成，防止 onShow/_checkTaskNow 重复下载
+            this._markTaskPersistedDone(taskId); // 存储级标记：页面销毁重建后仍能识别"已下载"，防重复下载
             this.setData({
               progress: 100,
               statusText: '下载完成！',
@@ -632,6 +688,8 @@ Page({
     this._precachePath = null;
     this._downloadTask = null;
     this._abortCache = false;
+    this._completedTaskId = null;
+    this._clearTaskPersistedDone(); // 重置清空链接时一并清除存储级已完成标记
     this.setData({
       url: '', videoInfo: null, taskId: null, progress: 0,
       statusText: '', statusHint: '', loading: false,

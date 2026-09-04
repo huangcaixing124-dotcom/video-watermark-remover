@@ -48,6 +48,8 @@ module.exports = {
   whisperModelSize: process.env.WHISPER_MODEL_SIZE || 'small',
   whisperDevice: process.env.WHISPER_DEVICE || 'cpu',
   whisperComputeType: process.env.WHISPER_COMPUTE_TYPE || 'int8',
+  // Max simultaneous Whisper transcription jobs (task is queued beyond this)
+  maxTranscriptions: parseInt(process.env.MAX_TRANSCRIPTIONS || '3', 10),
 
   // Douyin proxy APIs - used to resolve Douyin URLs without cookies
   // Each entry is a template with {url} placeholder

@@ -12,8 +12,17 @@ const path = require('path');
 const fs = require('fs');
 const config = require('../config');
 
-/** Local Python API script path (uses yt-dlp). */
+/** Local Python API script path (uses yt-dlp). 脚本可能在项目根或 server/ 下。 */
 const LOCAL_PYTHON_API = path.join(config.projectDir, 'douyin-api.py');
+// config.serverDir 是 .../server/src；脚本实际在 .../server/，故取其上一级
+const LOCAL_PYTHON_API_ALT = path.join(config.serverDir, '..', 'douyin-api.py');
+
+/** 取实际存在的脚本路径（双路径探测）。 */
+function resolvePythonScript() {
+  if (fs.existsSync(LOCAL_PYTHON_API)) return LOCAL_PYTHON_API;
+  if (fs.existsSync(LOCAL_PYTHON_API_ALT)) return LOCAL_PYTHON_API_ALT;
+  return null;
+}
 
 /** Known free Douyin proxy API templates (external) - most are unreliable, yt-dlp with cookies is preferred. */
 const DEFAULT_PROXY_APIS = [
@@ -62,8 +71,8 @@ function fetchJSON(url) {
  */
 function resolveWithLocalAPI(url) {
   return new Promise((resolve, reject) => {
-    const scriptPath = LOCAL_PYTHON_API;
-    if (!fs.existsSync(scriptPath)) {
+    const scriptPath = resolvePythonScript();
+    if (!scriptPath) {
       reject(new Error('Local Python API script not found'));
       return;
     }

@@ -140,15 +140,23 @@ Page({
       const taskId = res.data.id;
       this.setData({ taskId });
       // 轮询等待任务完成，返回的 status.text 是 SRT 格式
-      // 任务处理进度 0-100 映射到 15-100%（解析占 0-15%），保证进度条连续不回退
-      const status = await pollTask(`/api/transcript/task/${taskId}`, 3000, 9999, (st, p) => {
-        const labels = { downloading: '下载视频中...', extracting: '提取音频中...', transcribing: '语音转文字中...' };
-        const raw = Math.min(p || 0, 100);
-        const mapped = 15 + Math.round((raw / 100) * 85);
-        this.setData({ progress: mapped, statusText: labels[st] || '处理中...', statusHint: st === 'transcribing' ? '需要几分钟，请稍候' : `${mapped}%` });
-      });
+      // 任务处理进度 0-100 映射到 15-100%（解析占 0-15%），保证进度条连续不回退。
+      // 叠加缓动层：转录排队/阶段切换间隙进度条缓慢递增，真实进度到达时取 max 接管。
+      this._startTranscriptEase();
+      let finalStatus = null;
+      try {
+        finalStatus = await pollTask(`/api/transcript/task/${taskId}`, 3000, 9999, (st, p) => {
+          const labels = { downloading: '下载视频中...', extracting: '提取音频中...', transcribing: '语音转文字中...' };
+          const raw = Math.min(p || 0, 100);
+          const mapped = 15 + Math.round((raw / 100) * 85);
+          this._easeProgressT = Math.max(this._easeProgressT || 15, mapped); // 真实值接管缓动值
+          this._applyTranscriptProgress(mapped, labels[st] || '处理中...');
+        });
+      } finally {
+        this._stopTranscriptEase(); // 任务完成/失败/超时停止缓动
+      }
       // 从 SRT 格式中提取纯文本（去掉时间戳和序号）
-      const plainText = this._stripSrtTimestamps(status.text || '');
+      const plainText = this._stripSrtTimestamps(finalStatus.text || '');
       this.setData({ text: plainText || '（文案为空）', progress: 100, statusText: '提取完成', statusHint: '' });
       wx.showToast({ title: '文案提取成功', icon: 'success' });
     } catch (err) { this._clearParseTimer(); this.setData({ error: err.message || '文案提取失败' }); }
@@ -158,6 +166,34 @@ Page({
   // 清理解析阶段进度定时器
   _clearParseTimer() {
     if (this._parseTimer) { clearInterval(this._parseTimer); this._parseTimer = null; }
+  },
+
+  // ── 文案提取阶段进度缓动 ──
+  // 转录排队/阶段切换间隙时进度条缓慢递增（15→95），避免"停在15%不动"。
+  // 真实进度到达时由 pollTask 回调取 max 接管；完成(100)前停止，不碰 100 的完成标记。
+  _startTranscriptEase() {
+    this._stopTranscriptEase();
+    if (!this._easeProgressT || this._easeProgressT < 15) this._easeProgressT = 15;
+    // 每 3s +2，15→95 约 2 分钟爬满，封顶 95（不碰 100 完成标记）
+    this._easeTimerT = setInterval(() => {
+      if (this._easeProgressT < 95) {
+        this._easeProgressT = Math.min(95, this._easeProgressT + 2);
+        this._applyTranscriptProgress(this._easeProgressT, null);
+      } else {
+        this._stopTranscriptEase();
+      }
+    }, 3000);
+  },
+  _stopTranscriptEase() {
+    if (this._easeTimerT) { clearInterval(this._easeTimerT); this._easeTimerT = null; }
+  },
+  // 统一写文案提取进度：真实映射值与缓动值取 max，单调不回退，封顶 99（留 100 给完成）
+  _applyTranscriptProgress(shown, statusLabel) {
+    const capped = Math.min(Math.max(shown, this.data.progress || 0), 99);
+    const st = statusLabel || '处理中...';
+    // 状态标签为中文（如"语音转文字中..."），据此判断是否提示"需要几分钟"
+    const hint = st && st.includes('语音转文字') ? '需要几分钟，请稍候' : `${capped}%`;
+    this.setData({ progress: capped, statusText: st, statusHint: hint });
   },
 
   // 从SRT格式中提取纯文本：去掉时间戳行和序号行

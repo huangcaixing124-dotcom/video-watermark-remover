@@ -1,0 +1,13 @@
+# wrangler.toml — 去水印视频工具负载均衡 Worker
+name = "cold-grass-870wushuiyin"
+main = "cloudflare-worker.js"
+compatibility_date = "2024-09-23"
+
+# 关闭 Preview URL，避免每次部署多启一套预览端点
+preview_urls = false
+
+# 由定时器 __scheduled 定期后台刷新两台上游的健康状态。
+# 注意：Cloudflare cron 仅支持 5 字段且最小颗粒度为 1 分钟（不支持秒）。
+# 健康缓存本身有 30s TTL + 每次请求的 ctx.waitUntil 兜底刷新，分钟级调度已足够。
+[triggers]
+crons = [ "* * * * *" ]

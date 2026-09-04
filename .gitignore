@@ -51,3 +51,7 @@ out/
 # Temporary
 *.tmp
 temp/
+
+# 多平台 cookie 独立文件（含实时登录态，绝不能进仓库）。使用 server/cookie_splitter.js 从
+# server/config/export_all.txt 拆分重建。cookie_splitter.js 位于 server/ 根（仍跟踪）。
+server/config/

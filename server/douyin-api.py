@@ -8,9 +8,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-# 抖音 cookies 文件路径
-# 从浏览器导出 cookies.txt 放到这里
-COOKIES_FILE = Path(__file__).parent / "cookies.txt"
+# 抖音 cookies 文件路径（多平台独立 cookie 方案）。
+# 优先用 server/config/douyin_cookies.txt（cookie_splitter.js 拆分产出），
+# 回退到旧的共享 cookies.txt。
+_COOKIES_CANDIDATES = [
+    Path(__file__).parent / "config" / "douyin_cookies.txt",
+    Path(__file__).parent / "cookies.txt",
+]
+COOKIES_FILE = next((p for p in _COOKIES_CANDIDATES if p.exists()), None)
 
 
 def resolve_douyin(url: str) -> dict:
@@ -22,7 +27,7 @@ def resolve_douyin(url: str) -> dict:
         "--no-warnings",
         "--no-playlist",
     ]
-    if COOKIES_FILE.exists():
+    if COOKIES_FILE is not None:
         args.extend(["--cookies", str(COOKIES_FILE)])
     args.append(url)
 

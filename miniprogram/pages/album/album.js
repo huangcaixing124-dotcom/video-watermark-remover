@@ -160,6 +160,26 @@ Page({
     if (this._parseTimer) { clearInterval(this._parseTimer); this._parseTimer = null; }
   },
 
+  // ── 图片下载阶段进度缓动 ──
+  // 并发下载图片到临时文件阶段（无单张进度回调），进度条在 15→75 缓慢递增，
+  // 避免"正在下载图片..."时进度条停住；进入保存阶段(80)前停止。
+  _startImageEase() {
+    this._stopImageEase();
+    if (!this._easeProgressImg || this._easeProgressImg < 15) this._easeProgressImg = 15;
+    this._easeTimerImg = setInterval(() => {
+      if (this._easeProgressImg < 75) {
+        this._easeProgressImg = Math.min(75, this._easeProgressImg + 2);
+        const now = Math.max(this.data.progress || 0, this._easeProgressImg);
+        this.setData({ progress: now, statusText: '正在下载图片...', statusHint: `${now}%` });
+      } else {
+        this._stopImageEase();
+      }
+    }, 1500);
+  },
+  _stopImageEase() {
+    if (this._easeTimerImg) { clearInterval(this._easeTimerImg); this._easeTimerImg = null; }
+  },
+
   // 复制文案
   copyDescription() {
     const text = this.data.description;
@@ -195,6 +215,7 @@ Page({
     if (this.data.saving) return;
 
     this.setData({ saving: true, downloading: true, statusText: '正在下载图片...' });
+    this._startImageEase(); // 下载阶段进度缓动，避免"正在下载图片..."时进度条停住
 
     // 1. 并发下载所有选中图片到临时文件（并行加速）
     let tempFiles = [];
@@ -212,6 +233,7 @@ Page({
       });
     }));
     await Promise.all(promises);
+    this._stopImageEase(); // 图片下载完，停止缓动，进入真实的逐张保存进度
     this.setData({ statusText: '图片已下载，正在保存到相册...', progress: 80 });
 
     // 2. 授权一次
