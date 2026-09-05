@@ -3,23 +3,69 @@
  */
 const app = getApp();
 
+// 设备级用户标识：无登录，生成本地持久化的 uuid 区分不同手机/用户。
+// 服务端据此按用户隔离「新任务顶替旧任务」，绝不误伤其他用户。
+function getUserId() {
+  try {
+    let id = wx.getStorageSync('bridge_user_id');
+    if (!id) {
+      id = 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      wx.setStorageSync('bridge_user_id', id);
+    }
+    return id;
+  } catch (e) { return 'u_' + Math.random().toString(36).slice(2, 10); }
+}
+
 function request(method, url, data = {}) {
   return new Promise((resolve, reject) => {
-    const apiBase = app.globalData.apiBase || 'http://localhost:8800';
-    const isGet = method === 'GET';
-    wx.request({
-      url: `${apiBase}${url}`,
-      method,
-      data: isGet ? data : JSON.stringify(data),
-      dataType: 'json',
-      header: isGet ? {} : { 'Content-Type': 'application/json' },
-      timeout: 120000,
-      success: (res) => {
-        if (res.statusCode === 200) resolve(res.data);
-        else reject(new Error(res.data?.error || `HTTP ${res.statusCode}`));
-      },
-      fail: () => reject(new Error('网络请求失败，请检查服务器地址')),
+    // 唯一入口：只用 api.hcxserver.xyz（Cloudflare Worker → Windows 主）。
+    // 去掉 api-backup(Mac)：小程序不再连 Mac，避免「Mac 关闭 → 530」。
+    // Worker 侧已做 Windows 优先/故障转移，Windows 待在时 Mac 与否不影响；且即便未来想用 Mac 兜底，
+    // 也由 Worker 在 api 内部完成，小程序不直接碰 api-backup 域名。
+    const HOSTS = [
+      app.globalData.apiBase || 'https://api.hcxserver.xyz',
+    ].filter((h, i, a) => h && typeof h === 'string' && i === a.indexOf(h)); // 去重、去空
+
+    // 单次请求实际执行器
+    const doRequest = (base) => new Promise((res2, rej2) => {
+      const isGet = method === 'GET';
+      const headers = { ...(isGet ? {} : { 'Content-Type': 'application/json' }), 'X-User-Id': getUserId() };
+      wx.request({
+        url: `${base}${url}`,
+        method,
+        data: isGet ? data : JSON.stringify(data),
+        dataType: 'json',
+        header: headers,
+        timeout: 120000,
+        success: (res) => {
+          if (res.statusCode === 200) res2(res.data);
+          else rej2({ statusCode: res.statusCode, message: res.data?.error || `HTTP ${res.statusCode}` });
+        },
+        fail: () => rej2({ statusCode: 0, message: '网络请求失败，请检查服务器地址' }),
+      });
     });
+
+    // 可重试：530 / 5xx（隧道/网关不稳定）或网络失败(0)；4xx 等业务错误直接抛出、不切入口。
+    const RETRYABLE = (code) => code === 530 || (code >= 500 && code <= 599) || code === 0;
+    (async () => {
+      let lastErr = null;
+      for (const base of HOSTS) {
+        try {
+          // 成功即返回；任一可用即成功（Windows/Mac 互为备份）
+          return resolve(await doRequest(base));
+        } catch (e) {
+          lastErr = e;
+          const code = e && e.statusCode;
+          // 业务错误(4xx)——切换入口也无济于事，立即失败
+          if (typeof code === 'number' && code !== 0 && !RETRYABLE(code)) break;
+          // 可重试：短暂间隔后切换下一个入口
+          await new Promise(r => setTimeout(r, 600));
+        }
+      }
+      const msg = lastErr && lastErr.message;
+      // 把隧道偶发的 530 翻译成友好文案，避免手机端看到冷冰冰的"530"
+      reject(new Error(msg === 'HTTP 530' ? '网络波动，请重试（530）' : (msg || '请求失败')));
+    })();
   });
 }
 

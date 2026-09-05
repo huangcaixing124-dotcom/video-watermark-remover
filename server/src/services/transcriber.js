@@ -14,7 +14,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { generateId, sleep, formatDuration, getRefererForUrl } = require('../utils/helpers');
+const { generateId, formatDuration, getRefererForUrl } = require('../utils/helpers');
 const { extractVideo: playwrightExtract } = require('./playwrightService');
 const bridgeQueue = require('./bridgeQueue');
 const config = require('../config');
@@ -31,12 +31,36 @@ const TRANSCRIPT_DIR = path.join(config.cacheDir, 'transcripts');
 fs.mkdirSync(TRANSCRIPT_DIR, { recursive: true });
 
 /**
+ * 取消某用户所有仍在进行的旧转录任务，并清理输出目录。
+ * 仅处理目标 userId 的任务，绝不触碰其他用户，避免误伤多人并发使用。
+ * 用于：同用户提交新的文案提取时，立即停掉自己旧转录、释放 CPU 槽位，让新任务马上跑。
+ */
+function cancelUserInFlight(userId) {
+  if (!userId || userId === 'anonymous') return; // 无可靠标识不明文做顶替，宁可少取消不误杀
+  for (const task of tasks.values()) {
+    if (task.userId !== userId) continue; // 只动同用户
+    const active = ['queued', 'pending', 'downloading', 'extracting', 'transcribing'].includes(task.status);
+    if (!active) continue;
+    console.log(`[transcriber] 用户 ${task.userId} 提交了新任务，取消其旧任务 ${task.id}`);
+    if (typeof task._kill === 'function') { try { task._kill(); } catch {} }
+    task.status = 'cancelled';
+    task.error = '已被该用户的新任务取代';
+    if (task._outputDir) {
+      try {
+        if (fs.existsSync(task._outputDir)) fs.rmSync(task._outputDir, { recursive: true, force: true });
+      } catch {}
+    }
+  }
+}
+
+/**
  * Create a transcription task.
  * @param {string} url - Video URL
  * @param {object} options - { language: 'zh' }
+ * @param {string} [userId] - Per-device user identity (X-User-Id)
  * @returns {object} - Task info
  */
-function createTask(url, options = {}) {
+function createTask(url, options = {}, userId) {
   const taskId = generateId();
   const taskDir = path.join(TRANSCRIPT_DIR, taskId);
   fs.mkdirSync(taskDir, { recursive: true });
@@ -44,6 +68,7 @@ function createTask(url, options = {}) {
   const task = {
     id: taskId,
     url,
+    userId: userId || 'anonymous',
     status: 'pending',
     progress: 0,
     text: null,
@@ -54,7 +79,12 @@ function createTask(url, options = {}) {
     createdAt: Date.now(),
     _outputDir: taskDir,
     _audioPath: null,
+    _kill: null,
   };
+
+  // 同用户提交新文案提取 → 立即取消其旧的仍在进行的转录（核心诉求：旧的马上停、立刻执行新的）。
+  // 注意：必须在 tasks.set 之前调用，否则会把刚创建的自身(新任务 status=pending)也当旧任务取消。
+  cancelUserInFlight(task.userId);
 
   tasks.set(taskId, task);
 
@@ -76,32 +106,49 @@ function createTask(url, options = {}) {
 // 重试标记（在 runTranscription 中被读取）
 let _retryCount = 0;
 
-// ── Whisper 转录并发信号量 ─────────────────────────────
-// 转录是 CPU 密集型。i7-14790F(16c/24t) 上同时只跑 maxTranscriptions 个，
-// 其余任务排队（status='queued'），避免 CPU 被打满导致下载/API 卡顿。
+// ── Whisper 转录并发调度（FIFO 公平）────────────────────
+// 转录是 CPU 密集型。i7-14790F(16c/24t) 上同时只跑 maxTranscriptions 个。
+// 用中央 FIFO 队列 + pump 调度：槽位空出时总是推进"最早入队"的任务，
+// 避免"新任务刷屏抢占槽位、老任务永远等不到"的饥饿问题。
 let activeTranscriptions = 0;
 const MAX_TRANSCRIPTIONS = config.maxTranscriptions || 3;
+const queuedTranscriptions = [];
+
+/** 推进队列：只要有空槽就取出最早入队且未被顶替的任务执行，跑完再泵下一个。 */
+function pumpTranscriptions() {
+  if (activeTranscriptions >= MAX_TRANSCRIPTIONS) return;
+  // 剔除队列中任何已被顶替(cancelled)的任务（可能在队首，也可能在队中）
+  for (let i = queuedTranscriptions.length - 1; i >= 0; i--) {
+    if (queuedTranscriptions[i].status === 'cancelled') queuedTranscriptions.splice(i, 1);
+  }
+  if (queuedTranscriptions.length === 0) return;
+  const task = queuedTranscriptions.shift();
+  if (task.status === 'cancelled') return;
+  activeTranscriptions++;
+  (async () => {
+    try {
+      await runTranscriptionBody(task);
+    } finally {
+      activeTranscriptions--;
+      pumpTranscriptions(); // 一个完成/失败/取消后继续推下一个
+    }
+  })();
+}
 
 /**
- * 并发受控的转录入口。超过上限的任务先排队（queued），每 3s 重试一次空位。
- * 拿到空位后再执行真正的转录，确保同一时刻只有 MAX_TRANSCRIPTIONS 个在跑。
+ * 并发受控的转录入口。任务入队，由 pumpTranscriptions 按入队顺序调度执行，
+ * 确保同一时刻只有 MAX_TRANSCRIPTIONS 个在跑，且先到先服务(公平)。
  */
-async function runTranscription(task) {
-  while (activeTranscriptions >= MAX_TRANSCRIPTIONS) {
-    if (task.status === 'pending') task.status = 'queued';
-    await sleep(3000);
-  }
-  if (task.status === 'queued' && !task.error) task.status = 'pending';
-  activeTranscriptions++;
-  try {
-    await runTranscriptionBody(task);
-  } finally {
-    activeTranscriptions--;
-  }
+function runTranscription(task) {
+  if (task.status === 'cancelled') return; // 入队前已被顶替
+  if (task.status === 'pending') task.status = 'queued';
+  queuedTranscriptions.push(task);
+  pumpTranscriptions();
 }
 
 async function runTranscriptionBody(task) {
   for (let attempt = 1; attempt <= 2; attempt++) {
+    if (task.status === 'cancelled') return; // 被同用户新任务顶替，直接退出
     try {
       _retryCount = 0;
       // Step 1: Download video (or get audio directly for Kuaishou)
@@ -157,7 +204,7 @@ async function runTranscriptionBody(task) {
           } catch {}
         }
         try {
-          await downloadAudioFromUrl(videoUrl, audioPath, task.url);
+          await downloadAudioFromUrl(videoUrl, audioPath, task.url, (proc) => { task._kill = () => { try { proc.kill('SIGTERM'); } catch {} }; });
           // 验证音频文件是否有效
           if (fs.existsSync(audioPath) && fs.statSync(audioPath).size > 1024) {
             audioOk = true;
@@ -171,7 +218,7 @@ async function runTranscriptionBody(task) {
       }
     } else {
       // Standard flow: download full video via yt-dlp
-      await downloadVideoWithYTDL(task.url, videoDir);
+      await downloadVideoWithYTDL(task.url, videoDir, (proc) => { task._kill = () => { try { proc.kill('SIGTERM'); } catch {} }; });
 
       // Find downloaded audio
       const files = fs.readdirSync(videoDir);
@@ -195,7 +242,7 @@ async function runTranscriptionBody(task) {
       task.progress = 20;
 
       task._audioPath = audioPath;
-      await extractAudio(videoPath, audioPath);
+      await extractAudio(videoPath, audioPath, (proc) => { task._kill = () => { try { proc.kill('SIGTERM'); } catch {} }; });
     }
 
     // Step 3: Transcribe
@@ -205,12 +252,12 @@ async function runTranscriptionBody(task) {
     // 先用 zh 强制中文识别（快、对普通话准）。
     // 若识别结果为空，很可能是语言误判（英文/粤语/多语言/BGM干扰），
     // 自动用 auto 语言检测再试一次，避免"明明有对白却返回空文案"。
-    let text = await runWhisper(audioPath, task._outputDir, config.whisperModelSize, 'zh', config.whisperDevice, config.whisperComputeType);
+    let text = await runWhisper(audioPath, task._outputDir, config.whisperModelSize, 'zh', config.whisperDevice, config.whisperComputeType, (proc) => { task._kill = () => { try { proc.kill('SIGTERM'); } catch {} }; });
     let lang = 'zh';
     if (!text || !text.trim()) {
       console.log(`[transcriber] zh transcription empty (${audioPath}), retrying with auto language detection...`);
       try {
-        text = await runWhisper(audioPath, task._outputDir, config.whisperModelSize, 'auto', config.whisperDevice, config.whisperComputeType);
+        text = await runWhisper(audioPath, task._outputDir, config.whisperModelSize, 'auto', config.whisperDevice, config.whisperComputeType, (proc) => { task._kill = () => { try { proc.kill('SIGTERM'); } catch {} }; });
         lang = 'auto';
         console.log(`[transcriber] auto language retry done, text_len=${(text || '').trim().length}`);
       } catch (e) {
@@ -235,6 +282,10 @@ async function runTranscriptionBody(task) {
     try { if (videoPath) fs.unlinkSync(videoPath); } catch {}
     return; // 成功，退出
   } catch (err) {
+    // 被同用户新任务顶替（cancelled）：进程已被 kill，终止异常，不要当失败、不要重试。
+    if (task.status === 'cancelled') {
+      return;
+    }
     const msg = err.message || '';
     const isRetryable = isRetryableError(err) || msg.includes('timeout') || msg.includes('timed out');
 
@@ -290,7 +341,7 @@ function isRetryableError(err) {
 /**
  * Download video via yt-dlp，带 SSL 网络波动自动重试。
  */
-function downloadVideoWithYTDL(url, outputDir) {
+function downloadVideoWithYTDL(url, outputDir, onSpawn) {
   return new Promise((resolve, reject) => {
     const attempt = (triesLeft) => {
       const args = [
@@ -313,6 +364,8 @@ function downloadVideoWithYTDL(url, outputDir) {
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
       });
+
+      if (typeof onSpawn === 'function') { try { onSpawn(proc); } catch {} }
 
       let stderr = '';
 
@@ -349,7 +402,7 @@ function downloadVideoWithYTDL(url, outputDir) {
 /**
  * Extract audio from video using ffmpeg.
  */
-function extractAudio(videoPath, audioPath) {
+function extractAudio(videoPath, audioPath, onSpawn) {
   return new Promise((resolve, reject) => {
     const proc = spawn('ffmpeg', [
       '-y',
@@ -360,6 +413,8 @@ function extractAudio(videoPath, audioPath) {
       '-ac', '1',
       audioPath,
     ], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+
+    if (typeof onSpawn === 'function') { try { onSpawn(proc); } catch {} }
 
     let stderr = '';
     proc.stderr.on('data', data => { stderr += data.toString(); });
@@ -378,7 +433,7 @@ function extractAudio(videoPath, audioPath) {
  * Used for Kuaishou videos where we have the CDN URL but no local file.
  * Skips full video download — extracts audio directly.
  */
-function downloadAudioFromUrl(videoUrl, audioPath, sourceUrl) {
+function downloadAudioFromUrl(videoUrl, audioPath, sourceUrl, onSpawn) {
   return new Promise((resolve, reject) => {
     const referer = getRefererForUrl(sourceUrl || videoUrl);
     const args = [
@@ -397,6 +452,7 @@ function downloadAudioFromUrl(videoUrl, audioPath, sourceUrl) {
       timeout: 0, // 不限时，等下载自然完成
       windowsHide: true,
     });
+    if (typeof onSpawn === 'function') { try { onSpawn(proc); } catch {} }
     let stderr = '';
     proc.stderr.on('data', chunk => { stderr += chunk.toString(); });
     proc.on('close', code => {
@@ -415,7 +471,7 @@ function downloadAudioFromUrl(videoUrl, audioPath, sourceUrl) {
 /**
  * Run Whisper transcription.
  */
-function runWhisper(audioPath, outputDir, modelSize, language, device, computeType) {
+function runWhisper(audioPath, outputDir, modelSize, language, device, computeType, onSpawn) {
   return new Promise((resolve, reject) => {
     // Use the external Python script to avoid inline script encoding issues
     const scriptPath = path.join(__dirname, 'whisper_transcribe.py');
@@ -429,6 +485,8 @@ function runWhisper(audioPath, outputDir, modelSize, language, device, computeTy
       device,
       computeType,
     ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 0 });
+
+    if (typeof onSpawn === 'function') { try { onSpawn(proc); } catch {} }
 
     let stdout = '';
     let stderr = '';
@@ -483,23 +541,27 @@ function getSrtPath(taskId) {
   return task?.srtPath || null;
 }
 
-/** Cleanup old completed tasks. */
+/** Cleanup old completed/failed/cancelled tasks. */
 function cleanup() {
   const now = Date.now();
   const ttlMs = config.completedTaskTTLSeconds * 1000;
+  // 被顶替取消的转录是无用功，给更短 TTL，尽快释放内存/磁盘。
+  const cancelledTtlMs = 60000;
 
   for (const [id, task] of tasks) {
-    if ((task.status === 'completed' || task.status === 'failed') && now - task.createdAt > ttlMs) {
-      const dir = task._outputDir;
-      if (dir && fs.existsSync(dir)) {
-        try {
-          const files = fs.readdirSync(dir);
-          for (const f of files) fs.unlinkSync(path.join(dir, f));
-          fs.rmdirSync(dir);
-        } catch {}
-      }
-      tasks.delete(id);
+    const isTerminal = task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled';
+    if (!isTerminal) continue;
+    const ttl = task.status === 'cancelled' ? cancelledTtlMs : ttlMs;
+    if (now - task.createdAt <= ttl) continue;
+    const dir = task._outputDir;
+    if (dir && fs.existsSync(dir)) {
+      try {
+        const files = fs.readdirSync(dir);
+        for (const f of files) fs.unlinkSync(path.join(dir, f));
+        fs.rmdirSync(dir);
+      } catch {}
     }
+    tasks.delete(id);
   }
 }
 

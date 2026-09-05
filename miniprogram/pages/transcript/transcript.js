@@ -106,7 +106,14 @@ Page({
   },
 
   onUrlInput(e) { this.setData({ url: e.detail.value }); },
-  clearUrl() { this.setData({ url: '', text: null, taskId: null, error: '', progress: 0, showDetect: false }); },
+  clearUrl() {
+    // 让在途的文案提取请求作废（晚到响应不覆盖新输入），并停止 UI 轮询/缓动
+    this._abortTranscript = true;
+    this._transcriptSeq = (this._transcriptSeq || 0) + 1;
+    this._stopTranscriptEase();
+    this._clearParseTimer();
+    this.setData({ url: '', text: null, taskId: null, error: '', progress: 0, statusText: '', statusHint: '', showDetect: false });
+  },
 
   async startTranscript() {
     const url = extractUrl(this.data.url);
@@ -117,6 +124,11 @@ Page({
       wx.showToast({ title: '内容违规，已拦截', icon: 'error' });
       return;
     }
+    // 新提取使旧提取作废：递增会话序号，用于丢弃晚到的旧轮询/旧响应
+    this._abortTranscript = false;
+    const seq = (this._transcriptSeq || 0) + 1;
+    this._transcriptSeq = seq;
+    this._curTranscriptSeq = seq;
     this.setData({ loading: true, error: '', text: null, progress: 0 });
     // 解析阶段：立即显示进度条，0→15% 平滑推进（文案"正在解析链接/视频信息"）
     this._clearParseTimer();
@@ -157,9 +169,16 @@ Page({
       }
       // 从 SRT 格式中提取纯文本（去掉时间戳和序号）
       const plainText = this._stripSrtTimestamps(finalStatus.text || '');
+      // 期间已发起新的提取或已清空，丢弃本次晚到结果
+      if (this._curTranscriptSeq !== seq || this._abortTranscript) return;
       this.setData({ text: plainText || '（文案为空）', progress: 100, statusText: '提取完成', statusHint: '' });
       wx.showToast({ title: '文案提取成功', icon: 'success' });
-    } catch (err) { this._clearParseTimer(); this.setData({ error: err.message || '文案提取失败' }); }
+    } catch (err) {
+      this._clearParseTimer();
+      // 期间已发起新的提取或已清空，丢弃本次晚到错误
+      if (this._curTranscriptSeq !== seq || this._abortTranscript) return;
+      this.setData({ error: err.message || '文案提取失败' });
+    }
     finally { this._clearParseTimer(); this.setData({ loading: false }); }
   },
 

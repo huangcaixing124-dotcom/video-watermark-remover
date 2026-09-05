@@ -62,7 +62,7 @@ router.post('/start', async (req, res) => {
   }
 
   try {
-    const task = createTask(url, { language });
+    const task = createTask(url, { language }, req.headers['x-user-id']);
     res.json({
       success: true,
       data: {

@@ -300,17 +300,18 @@ Page({
           const info = await get(`/api/video/file-info/${taskId}`);
           const size = info.size || 0;
           // 分层方案：
-          //   <100MB  → 单文件 wx.downloadFile 直接下载（快、原画质）
-          //   100-300MB → Range 分片下载（不压缩，防超时+断点续传）
-          //   >300MB  → file-compressed 服务器后台压缩 → 分片下载压缩后的文件（提速）
+          //   >300MB    → file-compressed 服务器后台压缩 → 分片下载压缩后的文件（提速）
+          //   60-300MB  → Range 分片下载（不压缩，防单次长连接触发 530 + 断点续传）
+          //   ≤60MB     → 单文件 wx.downloadFile 直接下载（快、原画质）
+          // 阈值降到 60MB：常见几十 MB 的视频也走分片，避开 Cloudflare 隧道(≈300KB/s)单次拉大文件的 530。
           if (size > 300 * 1024 * 1024) {
             this.setData({ statusHint: '文件较大，正在压缩画质以加速下载...' });
             return { url: `${apiBase}/api/video/file-compressed/${taskId}`, size, chunked: true };
           }
-          if (size > 100 * 1024 * 1024) {
+          if (size > 60 * 1024 * 1024) {
             return { url: `${apiBase}/api/video/file/${taskId}`, size, chunked: true };
           }
-          // size<=100MB 时用 file-info 拿到的 size，走单文件直连；size<0 保守走分片
+          // size<=60MB 时用 file-info 拿到的 size，走单文件直连；size<0 保守走分片
           if (size <= 0) return { url: `${apiBase}/api/video/file/${taskId}`, size, chunked: true };
           return { url: `${apiBase}/api/video/file/${taskId}`, size, chunked: false };
         } catch {

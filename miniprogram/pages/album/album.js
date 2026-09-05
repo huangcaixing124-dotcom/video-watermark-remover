@@ -1,5 +1,5 @@
 // pages/album/album.js
-const { extractUrl, detectPlatform, post } = require('../../utils/api');
+const { extractUrl, detectPlatform, get, post } = require('../../utils/api');
 
 // 图片代理：通过服务器中转避免 CDN 防盗链（小红书/抖音都用）
 function proxyImage(url) {
@@ -82,7 +82,6 @@ Page({
 
   onUrlInput(e) { this.setData({ url: e.detail.value }); },
   clearUrl() { this.resetAll(); },
-
   // 粘贴并解析
   pasteAndParse() {
     if (this._busy) return;
@@ -106,7 +105,10 @@ Page({
   async parseAlbum(url) {
     const cleanUrl = extractUrl(url);
     if (!cleanUrl) { this._busy = false; return wx.showToast({ title: '未找到有效链接', icon: 'none' }); }
-    if (this.data.downloading) { this._busy = false; return; }
+    // 新解析使旧解析作废：递增会话序号，用于丢弃晚到的旧响应（旧的慢响应不覆盖新的）。
+    const sessionSeq = (this._sessionSeq || 0) + 1;
+    this._sessionSeq = sessionSeq;
+    this._curSeq = sessionSeq;
 
     this.setData({
       loading: true, error: '', noteInfo: null, images: [],
@@ -126,11 +128,23 @@ Page({
     try {
       const res = await post('/api/video/album/info', { url: cleanUrl });
       this._clearParseTimer();
+      // 若期间已发起了更新的解析，丢弃本次晚到结果（不覆盖新笔记数据）
+      if (this._curSeq !== sessionSeq) {
+        this._busy = false;
+        return;
+      }
       if (!res.success) throw new Error(res.error || '解析失败');
 
       const data = res.data;
+      let imagesData = data.images || [];
+      // 抖音图文走桥接扩展：/album/info 会先返回 waiting 状态 + taskId，需轮询桥接结果拿到图片列表。
+      if (data.waiting && data.taskId) {
+        const bridgeRes = await this._pollBridgeAlbum(data.taskId, sessionSeq, data.bridgeTip);
+        imagesData = bridgeRes.images || [];
+        if (imagesData.length === 0) throw new Error((bridgeRes.error) || '图文解析失败');
+      }
       // 为每张图构建代理地址，默认全选
-      const images = (data.images || []).map((item, idx) => ({
+      const images = imagesData.map((item, idx) => ({
         url: item.url || item,
         proxy: proxyImage(item.url || item),
         index: idx,
@@ -148,16 +162,50 @@ Page({
       });
     } catch (err) {
       this._clearParseTimer();
+      // 期间已发起更新的解析，丢弃本次晚到错误
+      if (this._curSeq !== sessionSeq) return;
       this.setData({ error: err.message || '解析失败', loading: false });
     } finally {
       this._clearParseTimer();
-      this._busy = false;
+      // 仅当仍是当前会话才复位 busy，避免覆盖更新的解析
+      if (this._curSeq === sessionSeq) this._busy = false;
     }
   },
 
   // 清理解析阶段进度定时器
   _clearParseTimer() {
     if (this._parseTimer) { clearInterval(this._parseTimer); this._parseTimer = null; }
+  },
+
+  // 轮询抖音图文桥接任务，直到拿到图片列表或失败/超时。
+  _pollBridgeAlbum(taskId, sessionSeq, bridgeTip) {
+    return new Promise((resolve, reject) => {
+      let tries = 0;
+      const MAX_TRIES = 50;      // ~75s（每 1.5s 一探），覆盖扩展 45s 标签页超时窗口
+      const poll = async () => {
+        // 期间用户已发起了更新的解析：终止本次轮询（避免晚到数据覆盖新笔记）
+        if (this._curSeq !== sessionSeq) { reject(new Error('已取消')); return; }
+        tries++;
+        try {
+          const r = await get(`/api/video/bridge/status/${taskId}`);
+          const images = r.images || [];
+          if (images.length > 0) { resolve({ images }); return; }
+          if (r.status === 'failed') { reject(new Error(r.error || '图文解析失败')); return; }
+          // 进行中：刷新进度提示，继续轮询
+          if (this._curSeq === sessionSeq) {
+            this.setData({ statusHint: bridgeTip || '正在通过浏览器解析图文...' });
+          }
+        } catch (e) {
+          // 单次轮询失败不立即放弃，重试到上限
+        }
+        if (tries >= MAX_TRIES) {
+          reject(new Error('图文解析超时，请确认已安装并启用「Video Download Bridge」扩展，然后重试'));
+          return;
+        }
+        setTimeout(poll, 1500);
+      };
+      poll();
+    });
   },
 
   // ── 图片下载阶段进度缓动 ──
@@ -347,6 +395,9 @@ Page({
   },
 
   resetAll() {
+    // 让任何在途解析立即作废，且释放 busy，允许"清空后再粘贴"立即发起新解析
+    this._sessionSeq = (this._sessionSeq || 0) + 1;
+    this._busy = false;
     this.setData({
       url: '', noteInfo: null, images: [], imageCount: 0, description: '',
       loading: false, downloading: false, saving: false, error: '',

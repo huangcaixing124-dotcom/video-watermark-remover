@@ -8,7 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const { generateId, sleep, estimateSizeMB, resolveCookiesFile } = require('../utils/helpers');
 const { downloadVideo, isRetryableError } = require('./ytdlp');
-const { runWatermarkRemoval } = require('./bridgeQueue');
+const { runWatermarkRemoval, addTask, waitForTask } = require('./bridgeQueue');
 const config = require('../config');
 
 /** In-memory task store. */
@@ -21,12 +21,52 @@ let activeDownloads = 0;
 const DOWNLOAD_DIR = path.join(config.cacheDir, 'downloads');
 fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 
+/**
+ * 取消某用户所有仍在"下载中"(in-flight)的旧任务，并删除已下载的旧目录。
+ * 仅处理目标 userId 的任务，绝不触碰其他用户，避免误伤多人并发使用。
+ * 用于：同用户提交新的下载/解析时，立即停掉自己旧的下载，独占带宽立刻跑新的。
+ */
+function cancelUserInFlight(userId) {
+  if (!userId || userId === 'anonymous') return; // 无可靠标识不明文做顶替，宁可少取消不误杀
+  for (const t of tasks.values()) {
+    if (t.userId !== userId) continue; // 只动同用户
+    if (t.status === 'downloading' && typeof t._kill === 'function') {
+      console.log(`[downloader] 用户 ${t.userId} 提交了新任务，取消其旧任务 ${t.id}`);
+      try { t._kill(); } catch {}
+      t.status = 'cancelled';
+      t.error = '已被该用户的新任务取代';
+      // 删除旧任务已下载的目录，避免陈旧文件残留占用空间
+      if (t.filePath) {
+        try {
+          const dir = path.dirname(t.filePath);
+          if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+        } catch {}
+      }
+    }
+  }
+}
+
+/** 每用户允许的在途下载任务数上限（含 downloading/queued/cancelled 之外的活动任务），防刷爆内存。 */
+const MAX_USER_ACTIVE = 3;
+
+/**
+ * 统计某用户当前"仍在进行"的下载任务数（downloading 或 pending 排队中）。
+ */
+function countUserActive(userId) {
+  let n = 0;
+  for (const t of tasks.values()) {
+    if (t.userId === userId && (t.status === 'downloading' || t.status === 'pending')) n++;
+  }
+  return n;
+}
+
 /** Create a download task with optional pre-populated info. */
-function createTask(url, info = null) {
+function createTask(url, info = null, userId) {
   const taskId = generateId();
   const task = {
     id: taskId,
     url,
+    userId: userId || 'anonymous',
     status: 'pending',
     progress: 0,
     title: info?.title || null,
@@ -35,7 +75,17 @@ function createTask(url, info = null) {
     filePath: null,
     error: null,
     createdAt: Date.now(),
+    _kill: null,
   };
+  // 同用户提交新下载 → 立即取消其旧的仍在下载的任务（核心诉求：旧的马上停、立刻执行新任务）
+  cancelUserInFlight(task.userId);
+  // 单用户并发上限：同用户活动任务已达上限则拒绝，避免刷爆内存/带宽。
+  if (userId && userId !== 'anonymous' && countUserActive(task.userId) > MAX_USER_ACTIVE) {
+    task.status = 'cancelled';
+    task.error = `下载任务过多，请等待当前任务完成后重试（单用户最多 ${MAX_USER_ACTIVE} 个）`;
+    tasks.set(taskId, task);
+    return task;
+  }
   tasks.set(taskId, task);
   startDownload(taskId);
   return task;
@@ -65,6 +115,10 @@ async function startDownload(taskId) {
         task.progress = Math.max(task.progress, Math.min(99, pct));
       }
     } };
+    // 暴露底层下载进程句柄：供同用户新任务顶替时 kill 掉旧下载。
+    downloadOptions.onSpawn = (proc) => {
+      task._kill = () => { try { proc.kill('SIGTERM'); } catch {} };
+    };
     if (task.directUrl) {
       downloadOptions.directUrl = task.directUrl;
     }
@@ -87,6 +141,11 @@ async function startDownload(taskId) {
   let success = false;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    // 被同用户新任务顶替（cancelled）：立即停止，不再尝试。
+    if (task.status === 'cancelled') {
+      task._kill = null;
+      return;
+    }
     if (task.directUrl && attempt === 1) {
       console.log(`[downloader] Using direct URL for task ${taskId}`);
     }
@@ -125,6 +184,7 @@ async function startDownload(taskId) {
 
       task.status = 'completed';
       task.progress = 100;
+      task._kill = null;
       success = true;
       break;
     } catch (err) {
@@ -140,12 +200,53 @@ async function startDownload(taskId) {
   }
 
   if (!success) {
-    console.error(`[downloader] 任务 ${taskId} 尝试 ${MAX_ATTEMPTS} 次后仍失败: ${lastErr?.message}`);
-    task.status = 'failed';
-    task.error = (lastErr?.message || '下载失败').slice(0, 500);
+    // 抖音链路(yt-dlp+proxy)常被抖音风控概率性拒，直接判失败会让用户经常看到"所有下载方式均失败"。
+    // 兜底：提交给 Edge 桥接扩展(从真实浏览器读登录态拿真实播放URL)，再下载，力求最终成功。
+    if (task.status !== 'cancelled') {
+      const bridgeSucceeded = await tryDouyinBridgeFallback(task, outputDir);
+      if (!bridgeSucceeded) {
+        console.error(`[downloader] 任务 ${taskId} 尝试 ${MAX_ATTEMPTS} 次后仍失败: ${lastErr?.message}`);
+        task.status = 'failed';
+        task.error = (lastErr?.message || '下载失败').slice(0, 500);
+      }
+    }
+    task._kill = null;
   }
 
   activeDownloads--;
+}
+
+/**
+ * 抖音下载失败的最终兜底：交给 Edge 桥接扩展拿真实播放URL并下载。
+ * 返回 true 表示桥接兜底成功（task 已置 completed）。
+ */
+async function tryDouyinBridgeFallback(task, outputDir) {
+  if (!task.url || !task.url.includes('douyin.com')) return false;
+  if (!task || task.status === 'completed' || task.status === 'cancelled') return false; // 已完成或被顶替无需兜底
+
+  console.log(`[downloader] 抖音直连失败，转桥接兜底: ${task.url.slice(0, 60)}...`);
+  try {
+    const { downloadFromUrl } = require('./ytdlp');
+    const bridgeTaskId = addTask(task.url, task.userId);
+    const res = await waitForTask(bridgeTaskId, 60000); // 等桥接返回真实播放URL(最多60s)
+    if (!res || !res.videoUrl) {
+      console.warn(`[downloader] 桥接兜底未拿到URL: ${task.url.slice(0, 50)}`);
+      return false;
+    }
+    // 拿到桥接播放URL，直接下载到本地
+    const bridgeOutput = path.join(outputDir, 'output.mp4');
+    fs.mkdirSync(outputDir, { recursive: true });
+    await downloadFromUrl(res.videoUrl, bridgeOutput, { sourceUrl: task.url, timeout: 120000 });
+    task.filePath = bridgeOutput;
+    task.status = 'completed';
+    task.progress = 100;
+    task.error = null;
+    console.log(`[downloader] 桥接兜底下载成功: ${bridgeOutput}`);
+    return true;
+  } catch (e) {
+    console.warn(`[downloader] 桥接兜底失败: ${e.message}`);
+    return false;
+  }
 }
 
 /** Get task status. */
@@ -193,29 +294,33 @@ function getTaskFileFromDisk(taskId) {
   }
 }
 
-/** Cleanup old completed/failed tasks. */
+/** Cleanup old completed/failed/cancelled tasks. */
 function cleanup() {
   const now = Date.now();
   const ttlMs = config.completedTaskTTLSeconds * 1000;
+  // 被顶替取消的任务是无用功，给更短 TTL，尽快释放内存/磁盘。
+  const cancelledTtlMs = 60000;
 
   for (const [id, task] of tasks) {
-    // Cleanup old completed/failed tasks
-    if (task.status === 'completed' || task.status === 'failed') {
-      if (now - task.createdAt > ttlMs) {
-        // Delete files
-        if (task.filePath) {
-          const dir = path.dirname(task.filePath);
-          try {
-            const files = fs.readdirSync(dir);
-            for (const f of files) {
-              fs.unlinkSync(path.join(dir, f));
-            }
-            fs.rmdirSync(dir);
-          } catch {}
-        }
-        tasks.delete(id);
-      }
+    const isTerminal = task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled';
+    if (!isTerminal) continue;
+    const ttl = task.status === 'cancelled' ? cancelledTtlMs : ttlMs;
+    if (now - task.createdAt <= ttl) continue;
+    // Delete output dir（无论 filePath 是否已设置，DELETE_DIR/taskId 可能残留）
+    let dir = null;
+    if (task.filePath) {
+      dir = path.dirname(task.filePath);
+    } else if (task.id) {
+      dir = path.join(DOWNLOAD_DIR, task.id);
     }
+    if (dir && fs.existsSync(dir)) {
+      try {
+        const files = fs.readdirSync(dir);
+        for (const f of files) fs.unlinkSync(path.join(dir, f));
+        fs.rmdirSync(dir);
+      } catch {}
+    }
+    tasks.delete(id);
   }
 }
 

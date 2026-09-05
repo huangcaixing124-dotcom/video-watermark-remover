@@ -107,25 +107,33 @@ async function extractWithPython(url) {
   throw new Error('所有 Python 提取器均失败');
 }
 
-/** 判断错误是否为 SSL/网络波动问题（可重试） */
+/** 判断错误是否为 SSL/网络波动/限流/反爬问题（可重试） */
 function isRetryableError(err) {
   const msg = (err.message || '').toLowerCase();
   return msg.includes('ssl') || msg.includes('unexpected_eof') || msg.includes('eof occurred')
     || msg.includes('connection reset') || msg.includes('connection refused')
-    || msg.includes('unable to download webpage');
+    || msg.includes('unable to download webpage')
+    || msg.includes('http error 412') || msg.includes(' code 412') || msg.includes(' 412 ')
+    || msg.includes('http error 303') || msg.includes(' code 303')
+    || msg.includes('too many requests') || msg.includes('429')
+    || msg.includes('read ec2reset') || msg.includes('remote host closed')
+    || msg.includes('socket hang up') || msg.includes('epipe') || msg.includes('etimedout') || msg.includes('econnreset')
+    || msg.includes('unable to download video data');
 }
 
 /**
- * 带自动重试的 yt-dlp 解析（SSL 网络波动时自动重试）。
+ * 带自动重试的 yt-dlp 解析（SSL/网络/限流/反爬波动时自动重试）。
+ * 抖动类错误重试时加小随机延时，避免重试又撞上限流窗口。
  */
-async function _getVideoInfoWithRetry(url, options = {}, retries = 2) {
+async function _getVideoInfoWithRetry(url, options = {}, retries = 3) {
   for (let attempt = 1; attempt <= retries + 1; attempt++) {
     try {
       return await _getVideoInfoWithYtdlp(url, options);
     } catch (err) {
       if (attempt <= retries && isRetryableError(err)) {
-        const delay = attempt * 1000; // 第1次重试等1秒，第2次等2秒
-        console.log(`[ytdlp] Retry attempt ${attempt}/${retries} after ${delay}ms: ${err.message}`);
+        const base = attempt * 1000; // 第1次1s，第2次2s，第3次3s
+        const delay = base + Math.floor(Math.random() * 500); // +0~500ms 抖动，避免集中撞限流
+        console.log(`[ytdlp] Retry attempt ${attempt}/${retries} after ${delay}ms: ${(err.message || '').slice(0, 120)}`);
         await new Promise(r => setTimeout(r, delay));
         continue;
       }
@@ -367,7 +375,9 @@ async function downloadVideo(url, outputPath, options = {}) {
       const proxyResult = await resolveDouyin(url);
       if (proxyResult && proxyResult.directUrl) {
         console.log(`[ytdlp] Downloading from proxy URL: ${proxyResult.directUrl.slice(0, 80)}...`);
-        const fp = await downloadFromUrl(proxyResult.directUrl, finalPath, { ...options, sourceUrl: url });
+        // 注意：finalPath 可能含 yt-dlp 的 output.%(ext)s 占位符，但 downloadFromUrl(ffmpeg) 是
+        // 按字面路径写文件，不会替换 %(ext)s，会导致 muxer "Invalid argument"。这里固定用 .mp4。
+        const fp = await downloadFromUrl(proxyResult.directUrl, finalPath.replace('%(ext)s', 'mp4'), { ...options, sourceUrl: url });
         return { filePath: fp };
       }
     } catch (err) {
@@ -470,6 +480,11 @@ function downloadFromUrl(videoUrl, outputPath, options) {
       windowsHide: true,
     });
 
+    // 可选回调：暴露 ffmpeg 进程句柄，供调用方在其下载完成前 kill（用于"新任务顶替旧任务"）。
+    if (typeof options.onSpawn === 'function') {
+      try { options.onSpawn(proc); } catch {}
+    }
+
     let stderr = '';
     // 解析 ffmpeg -progress 输出，估算下载进度
     let totalMs = null;      // 输入总时长（毫秒）
@@ -565,6 +580,11 @@ function _downloadWithYtdlp(url, outputPath, options = {}) {
       timeout: 0, // 不限时
       windowsHide: true,
     });
+
+    // 可选回调：暴露 yt-dlp 进程句柄，供调用方在其下载完成前 kill（用于"新任务顶替旧任务"）。
+    if (typeof options.onSpawn === 'function') {
+      try { options.onSpawn(proc); } catch {}
+    }
 
     let stderr = '';
     let progressCb = typeof options.progressCb === 'function' ? options.progressCb : null;

@@ -66,6 +66,30 @@ router.post('/info', async (req, res) => {
   // try direct parsing first (yt-dlp / doubao API), then fall back to bridge
   const { platform: platKey, label: platLabel, needsBridge } = detectPlatform(url);
 
+  // 抖音：yt-dlp 被抖音概率性风控(~80%拒, 即使含sessionid)，Playwright 也不稳。
+  // 直接优先走 Edge 桥接(真实浏览器读登录态拿播放URL，几乎100%成功)，跳过不稳直连链路。
+  if (platKey === 'douyin') {
+    console.log(`[info] 抖音直接走桥接: ${url.slice(0, 50)}...`);
+    const bridgeTaskId = bridgeQueue.addTask(url, req.headers['x-user-id']);
+    return res.json({
+      success: true,
+      data: {
+        title: '正在解析中...',
+        author: '',
+        duration: 0,
+        durationFormatted: '0:00',
+        thumbnailUrl: null,
+        platform: '抖音',
+        videoId: '',
+        webpageUrl: url,
+        directUrl: null,
+        hasOriginal: false,
+        taskId: bridgeTaskId,
+        bridgeTip: '正在通过浏览器解析，请稍候...',
+      },
+    });
+  }
+
   if (needsBridge) {
     try {
       let info;
@@ -125,7 +149,7 @@ router.post('/info', async (req, res) => {
         title: info.title,
         platform: info.platformLabel || platLabel,
         directUrl: info.directUrl || null,
-      });
+      }, req.headers['x-user-id']);
       return res.json({
         success: true,
         data: {
@@ -153,7 +177,7 @@ router.post('/info', async (req, res) => {
             title: pwResult.title || platLabel + '视频',
             platform: platLabel,
             directUrl: pwResult.videoUrl,
-          });
+          }, req.headers['x-user-id']);
           return res.json({
             success: true,
             data: {
@@ -177,7 +201,7 @@ router.post('/info', async (req, res) => {
 
       // 最后回退到桥接扩展
       console.log(`[info] Falling back to bridge extension for ${platLabel}`);
-      const taskId = bridgeQueue.addTask(url);
+      const taskId = bridgeQueue.addTask(url, req.headers['x-user-id']);
       console.log(`[bridge] Queued task during info: ${taskId} for ${url.slice(0, 60)}...`);
       return res.json({
         success: true,
@@ -228,7 +252,7 @@ router.post('/info', async (req, res) => {
       title: info.title,
       platform: info.platformLabel,
       directUrl: info.directUrl || null,
-    });
+    }, req.headers['x-user-id']);
     res.json({
       success: true,
       data: {
@@ -264,6 +288,24 @@ router.post('/download', async (req, res) => {
     try {
       let info;
 
+      // 抖音：yt-dlp 直连被风控概率性拒，直接走 Edge 桥接（如 /info 一样一键直达），
+      // 跳过注定失败的 yt-dlp 尝试与相应超时。
+      if (platKey === 'douyin') {
+        const taskId = bridgeQueue.addTask(url, req.headers['x-user-id']);
+        console.log(`[bridge] 抖音下载直接走桥接: ${url.slice(0, 50)}... -> ${taskId}`);
+        return res.json({
+          success: true,
+          data: {
+            id: taskId,
+            title: '等待浏览器处理...',
+            platform: '抖音',
+            status: 'downloading',
+            progress: 0,
+            bridgeTip: '正在通过浏览器解析，请稍候...',
+          },
+        });
+      }
+
       if (platKey === 'doubao') {
         const videoId = extractVideoId(url);
         if (!videoId) throw new Error('无法从链接中提取 video_id');
@@ -285,7 +327,7 @@ router.post('/download', async (req, res) => {
         title: info.title,
         platform: info.platformLabel || platLabel,
         directUrl: info.directUrl || null,
-      });
+      }, req.headers['x-user-id']);
       return res.json({
         success: true,
         data: {
@@ -306,7 +348,7 @@ router.post('/download', async (req, res) => {
             title: pwResult.title || platLabel + '视频',
             platform: platLabel,
             directUrl: pwResult.videoUrl,
-          });
+          }, req.headers['x-user-id']);
           return res.json({
             success: true,
             data: {
@@ -347,7 +389,7 @@ router.post('/download', async (req, res) => {
       title: info.title,
       platform: info.platformLabel,
       directUrl: info.directUrl || null,
-    });
+    }, req.headers['x-user-id']);
 
     res.json({
       success: true,
@@ -472,8 +514,37 @@ router.get('/file/:id', async (req, res) => {
  * 获取下载文件信息（大小），用于小程序判断走 Worker 还是直连。
  * GET /api/video/file-info/:id
  */
-router.get('/file-info/:id', (req, res) => {
+router.get('/file-info/:id', async (req, res) => {
   const taskId = req.params.id;
+
+  // bridge 任务：文件由桥接扩展回报后经 ffmpeg 落盘，存于 bridgeQueue 任务而非 downloader 任务表。
+  // 需等待本地下载完成（最多 ~25s），再按 localFilePath 返回。
+  if (String(taskId).startsWith('bridge_')) {
+    const bridgeTask = bridgeQueue.getTask(taskId);
+    if (!bridgeTask || !bridgeTask.result) {
+      return res.status(404).json({ error: '视频文件不存在或未完成' });
+    }
+    if (bridgeTask._downloadPromise) {
+      try {
+        await Promise.race([
+          bridgeTask._downloadPromise,
+          new Promise(r => setTimeout(r, 25000)),
+        ]);
+      } catch {}
+    }
+    const bPath = bridgeTask.localFilePath;
+    if (!bPath || !fs.existsSync(bPath)) {
+      return res.status(404).json({ error: '视频文件不存在或未完成' });
+    }
+    const bStat = fs.statSync(bPath);
+    const bSizeMB = Math.round(bStat.size / 1024 / 1024 * 100) / 100;
+    return res.json({
+      size: bStat.size,
+      sizeMB: bSizeMB,
+      needCompress: bStat.size > 80 * 1024 * 1024,
+    });
+  }
+
   // 优先从内存任务取，任务已清理则从磁盘取
   let filePath = getTaskFile(taskId) || getTaskFileFromDisk(taskId);
   if (!filePath) {
@@ -684,7 +755,7 @@ router.post('/bridge/parse', (req, res) => {
     return res.status(400).json({ error: '请提供视频链接' });
   }
 
-  const taskId = bridgeQueue.addTask(url);
+  const taskId = bridgeQueue.addTask(url, req.headers['x-user-id']);
   console.log(`[bridge] Queued parse task: ${taskId} for ${url.slice(0, 60)}...`);
   res.json({ success: true, taskId });
 });
@@ -694,17 +765,18 @@ router.get('/bridge/tasks', (req, res) => {
   bridgeQueue.cleanup();
   const pending = bridgeQueue.getNextPendingTask();
   if (pending) {
-    return res.json({ hasTask: true, taskId: pending.taskId, url: pending.url });
+    // 把 taskType(image/video) 一并返回给扩展，否则扩展拿不到类型会把图文误当视频处理。
+    return res.json({ hasTask: true, taskId: pending.taskId, url: pending.url, taskType: pending.taskType || 'video' });
   }
   res.json({ hasTask: false });
 });
 
 /** Extension reports result back */
 router.post('/bridge/result', (req, res) => {
-  const { taskId, videoUrl, error } = req.body;
-  const task = bridgeQueue.reportResult(taskId, videoUrl, error);
+  const { taskId, videoUrl, error, images } = req.body;
+  const task = bridgeQueue.reportResult(taskId, videoUrl, error, images);
   if (task) {
-    console.log(`[bridge] Task ${taskId} got video URL: ${videoUrl ? 'OK' : 'FAILED'}`);
+    console.log(`[bridge] Task ${taskId} got ${Array.isArray(images) && images.length ? 'images ' + images.length : (videoUrl ? 'video URL' : 'FAILED')}`);
   }
   res.json({ success: true });
 });
@@ -719,6 +791,7 @@ router.get('/bridge/status/:taskId', (req, res) => {
     taskId: task.taskId,
     status: task.status,
     videoUrl: task.result,
+    images: task.images || [],
     error: task.error,
   });
 });
@@ -952,34 +1025,47 @@ router.post('/album/info', async (req, res) => {
     return res.status(400).json({ error: `暂不支持 ${platLabel} 的图文解析` });
   }
 
+  // 抖音图文不依赖 Edge 桥接，回退用 Python/Playwright 提取器（与小红书一致，同步返回图片列表）。
   try {
     let result = null;
-
-    if (platKey === 'xiaohongshu') {
-      // Xiaohongshu: use Playwright dedicated album extraction
-      result = await extractXiaohongshuAlbum(url);
-    } else {
-      // Douyin: try Python extractor (it now supports image extraction)
-      const pyResult = await extractWithPython(url);
-      if (!pyResult || pyResult.error) throw new Error(pyResult?.error || '解析失败');
-
-      const images = (pyResult.images || []).filter(Boolean).map(u => {
-        if (u && u.startsWith('//')) return 'https:' + u;
-        return u;
-      });
-
-      result = {
-        title: (pyResult.title || 'Untitled').slice(0, 200),
-        author: pyResult.author || '',
-        description: pyResult.description || '',
-        platform: pyResult.platform || platLabel,
-        contentType: images.length > 0 ? 'image_set' : 'video',
-        imageCount: images.length,
-        images: images.map((url, idx) => ({ url, index: idx })),
-        hasVideo: !!pyResult.video_url,
-        videoUrl: pyResult.video_url || null,
-      };
+    // 小红书/抖音图文都走提取器（带网络/SSL 抖动自动重试），只这一处收敛图文逻辑，其他功能不动。
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        if (platKey === 'xiaohongshu') {
+          // Xiaohongshu: use Playwright dedicated album extraction
+          result = await extractXiaohongshuAlbum(url);
+        } else {
+          // Douyin: use Python extractor (supports image notes)
+          const py = await extractWithPython(url);
+          if (!py || py.error) throw new Error(py?.error || 'Python 提取失败');
+          const imgs = (py.images || []).filter(Boolean).map(u => (u && u.startsWith('//')) ? 'https:' + u : u);
+          result = {
+            title: (py.title || 'Untitled').slice(0, 200),
+            author: py.author || '',
+            description: py.description || '',
+            platform: py.platform || platLabel,
+            contentType: imgs.length > 0 ? 'image_set' : 'video',
+            imageCount: imgs.length,
+            images: imgs.map((iv, idx) => ({ url: iv, index: idx })),
+            hasVideo: !!py.video_url,
+            videoUrl: py.video_url || null,
+          };
+        }
+        lastErr = null;
+        break; // 成功
+      } catch (e) {
+        lastErr = e;
+        // 只对网络/SSL/空结果类抖动重试；已经是平台逻辑错误(如"暂不支持")则立即失败。
+        const transient = (e.message || '').match(/network|eof|ssl|reset|timeout|超时|连接|captcha|401|403|412|429|429|timed out/i);
+        if (attempt < 3 && (transient || !result)) {
+          await new Promise(r => setTimeout(r, attempt * 1200));
+          continue;
+        }
+        throw e;
+      }
     }
+    if (lastErr) throw lastErr;
 
     if (result && result.title) {
       result.title = result.title.replace(/[\uD800-\uDFFF]/g, '').replace(/�/g, '');

@@ -71,11 +71,13 @@ export default {
 
     // 健康检查端点
     if (path === '/api/health') {
-      // 使用缓存状态（后台定时刷新）
-      ctx.waitUntil(refreshHealth());
+      // 诊断：即时真实 probe 两台（不走缓存），用于确认 Worker 眼里 Mac 的真实可达性
+      const fresh = [];
+      for (const s of SERVERS) fresh.push({ name: s.name, probeUrl: s.url + '/api/health', ok: await probe(s.url + '/api/health') });
       const status = {};
-      SERVERS.forEach((s, i) => status[s.name] = serverStatus[i] ? 'online' : 'offline');
-      return new Response(JSON.stringify({ status: 'ok', servers: status }, null, 2),
+      fresh.forEach(f => status[f.name] = f.ok ? 'online' : 'offline');
+      ctx.waitUntil(refreshHealth());
+      return new Response(JSON.stringify({ status: 'ok', __v: '3-diag', servers: status, probes: fresh }, null, 2),
         { headers: { 'Content-Type': 'application/json' } });
     }
 
@@ -120,8 +122,7 @@ function routeBackend(url, hashKey, statusArr) {
     return onlineServers.find(s => s.name === 'Windows') || onlineServers[0];
   }
 
-  // 任务 ID 前缀路由：0开头→Windows，1开头→MacBook
-  // 同时覆盖 video(task|file)、transcript(task|text|srt)，任务始终回到创建它的服务器
+  // 任务 ID 前缀路由：0开头→Windows，1开头→MacBook（任务始终回到创建它的服务器）
   if (hashKey === 'task-id') {
     const id = url.pathname.match(/\/api\/(?:video\/(?:task|file)|transcript\/(?:task|text|srt))\/(.+)/)?.[1] || '';
     const idx = id.startsWith('0') ? 0 : id.startsWith('1') ? 1 : -1;
@@ -129,48 +130,69 @@ function routeBackend(url, hashKey, statusArr) {
     if (idx >= 0) return onlineServers[0];
   }
 
+  // 普通请求：优先 Windows（主），Mac 仅当 Windows 不在线时降级使用。
+  // 满足「Mac 关闭时任务回落到 Windows 本机」：Windows online 时绝不把流量分给 Mac，
+  // 从根本上避免因哈希路由到 Mac(掉线) 而产生的 530/failover 竞态。
+  const windows = onlineServers.find(s => s.name === 'Windows');
+  if (windows) return windows;
+
+  // Windows 不在线时，只能在存活后端里负载均衡（通常只剩 Mac）
   const hash = hashCode(hashKey);
   return onlineServers[hash % onlineServers.length];
 }
 
-/** 转发请求，失败时强制刷新并重试另一台 */
+/** 转发请求，失败（含后端返回 530/5xx）时切换另一台可用后端。 */
 async function forwardWithFailover(request, url, backend) {
   const start = Date.now();
-  const target = backend.url + url.pathname + url.search;
-  const body = ['GET','HEAD'].includes(request.method) ? null : request.body;
+  // 先读 body 为 buffer，供首次转发与 failover 重放（避免 ReadableStream 消耗一次后失效）
+  const bodyBuf = ['GET', 'HEAD'].includes(request.method) ? null : await request.clone().arrayBuffer();
+
+  const send = async (base) => fetch(new Request(base + url.pathname + url.search, {
+    method: request.method, headers: request.headers, body: bodyBuf,
+  }), { timeout: TIMEOUT });
 
   try {
-    const resp = await fetch(target, {
-      method: request.method, headers: request.headers, body, timeout: TIMEOUT,
-    });
+    const resp = await send(backend.url);
     const ms = Date.now() - start;
     if (ms > 5000) console.log(`[proxy] ${url.pathname} -> ${backend.name} took ${ms}ms`);
+    // 关键：后端若返回 530 / 5xx（隧道/网关层故障，如 Mac 掉线返回 Tunnel error 530），
+    // 视为该后端不可用，failover 到另一台（如 Mac 关时切 Windows），而不是把 530 透传给用户。
+    if (resp.status === 530 || resp.status >= 500) {
+      console.log(`[failover] ${backend.name} returned ${resp.status} (${url.pathname}), switching backend`);
+      return await failoverToOther(request, url, backend, send);
+    }
     return new Response(resp.body, { status: resp.status, headers: resp.headers });
   } catch (err) {
-    console.log(`[failover] ${backend.name} failed: ${err.message}`);
-    // 当前后端失败，标记离线并强制刷新
-    const bidx = SERVERS.indexOf(backend);
-    if (bidx >= 0) serverStatus[bidx] = false;
-    healthExpireAt = 0;
+    console.log(`[failover] ${backend.name} fetch failed: ${err.message}`);
+    return await failoverToOther(request, url, backend, send);
+  }
+}
 
-    // 选另一台在线
-    const others = await refreshHealthWithResult(true);
-    const fallback = others.find(s => s.url !== backend.url);
-    if (!fallback) {
-      return new Response(JSON.stringify({ error: '转发失败，无可用备用' }), {
-        status: 503, headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    try {
-      const resp = await fetch(fallback.url + url.pathname + url.search, {
-        method: request.method, headers: request.headers, body, timeout: TIMEOUT,
-      });
-      return new Response(resp.body, { status: resp.status, headers: resp.headers });
-    } catch {
-      return new Response(JSON.stringify({ error: '转发失败，所有服务器不可用' }), {
-        status: 503, headers: { 'Content-Type': 'application/json' },
-      });
-    }
+/** 标记故障后端离线、强制刷新健康、改发另一台可用后端（优先 Windows）。 */
+async function failoverToOther(request, url, failedBackend, send) {
+  const fidx = SERVERS.indexOf(failedBackend);
+  if (fidx >= 0) serverStatus[fidx] = false;
+  healthExpireAt = 0;
+  healthRefreshing = false;
+  const online = await refreshHealthWithResult(true);
+  if (online.length === 0) {
+    return new Response(JSON.stringify({ error: '所有服务器均不可用' }), {
+      status: 503, headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  // 尽量选一台 ≠ 故障后端 的，且优先 Windows（桥接能力在本机；Mac 关时要落到 Windows）
+  const alt = online.find(s => s.name === 'Windows' && s !== failedBackend)
+    || online.find(s => s !== failedBackend)
+    || online[0];
+  try {
+    const resp = await send(alt.url);
+    console.log(`[failover] now served by ${alt.name} (${url.pathname}) status=${resp.status}`);
+    return new Response(resp.body, { status: resp.status, headers: resp.headers });
+  } catch (e) {
+    console.log(`[failover] alt ${alt.name} failed: ${e.message}`);
+    return new Response(JSON.stringify({ error: '所有服务器均不可用' }), {
+      status: 503, headers: { 'Content-Type': 'application/json' },
+    });
   }
 }
 

@@ -20,14 +20,14 @@
     "http://localhost/*"
   ],
   "content_scripts": [{
-    "matches": ["https://*.kuaishou.com/*", "https://*.doubao.com/*"],
+    "matches": ["https://*.kuaishou.com/*", "https://*.doubao.com/*", "https://*.douyin.com/*"],
     "js": ["content.js"],
     "run_at": "document_end",
     "all_frames": true
   }],
   "web_accessible_resources": [{
     "resources": ["main.js"],
-    "matches": ["https://*.kuaishou.com/*", "https://*.doubao.com/*"]
+    "matches": ["https://*.kuaishou.com/*", "https://*.doubao.com/*", "https://*.douyin.com/*"]
   }],
   "background": {
     "service_worker": "background.js"

@@ -1,7 +1,13 @@
 // app.js
 App({
   onLaunch() {
-    const apiBase = wx.getStorageSync('api_base') || 'https://api.hcxserver.xyz';
+    // 唯一服务器 = Windows(api.hcxserver.xyz)。强制纠正：若缓存里存的是 api-backup(Mac)，
+    // 忽略并改回 api —— 小程序永不连 Mac，避免「Mac 关闭 → 530」。
+    let apiBase = wx.getStorageSync('api_base') || '';
+    if (!apiBase || /api-backup\.hcxserver\.xyz/.test(apiBase)) {
+      apiBase = 'https://api.hcxserver.xyz';
+      try { wx.setStorageSync('api_base', apiBase); } catch {}
+    }
     const darkMode = wx.getStorageSync('dark_mode') ?? 'auto';
     this.globalData.apiBase = apiBase;
     this.globalData.darkMode = darkMode;
